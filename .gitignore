@@ -1,0 +1,5 @@
+# Local workflow agent notes and drafts (never pushed)
+.agents/
+
+# macOS
+.DS_Store
