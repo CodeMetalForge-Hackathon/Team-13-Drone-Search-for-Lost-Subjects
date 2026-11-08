@@ -27,7 +27,7 @@ done
 rec="${rec%/}"
 name="${name:-$(basename "$rec")}"
 out="data/$name"
-config="${CONFIG:-calib/openvins/crazyflie}"
+config="${CONFIG:-calib/openvins/pi5}"
 py=.venv/bin/python
 
 [ -x "$py" ] || { echo "error: no .venv; run: python3 -m venv .venv && .venv/bin/pip install -r offline/requirements.txt" >&2; exit 1; }

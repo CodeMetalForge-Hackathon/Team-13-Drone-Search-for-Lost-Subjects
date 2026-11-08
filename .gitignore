@@ -12,3 +12,4 @@ __pycache__/
 docker/build.log
 calib/openvins/*/
 !calib/openvins/crazyflie/
+!calib/openvins/pi5/
