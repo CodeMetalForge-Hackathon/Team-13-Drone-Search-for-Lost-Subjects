@@ -19,6 +19,10 @@ COPY --from=src . src/kalibr
 ARG JOBS=4
 RUN catkin build -j${JOBS} --no-status && rm -rf build logs
 
+# TeX for kalibr_create_target_pdf (PyX draws its labels with TeX). Separate layer so adding it does not rebuild Kalibr.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      texlive-latex-base texlive-fonts-recommended && rm -rf /var/lib/apt/lists/*
+
 # Fall back to a manual focal-length guess if Kalibr cannot initialise it (ethz-asl/kalibr#346)
 ENV KALIBR_MANUAL_FOCAL_LENGTH_INIT=1
 COPY entrypoint.sh /entrypoint.sh
