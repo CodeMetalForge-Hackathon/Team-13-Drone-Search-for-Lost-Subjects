@@ -324,7 +324,7 @@ class Pipeline:
         if self._heart_last is not None and t - self._heart_last_t > self.cfg.heart_last_hold_s:
             self._heart_last, self._heart_locks = None, deque()
 
-    def _update_heart(self, t: float, near_excess: float | None, br) -> None:
+    def _update_heart(self, t: float, near_excess: float | None, br, present: bool = True) -> None:
         """Heart estimate every heart_every_s, only over a window without real motion inside the
         range boundary (calibrate --boundary). Without a boundary, any clear motion pauses it: a CW
         radar cannot separate a nearby bystander's slow movements from a heartbeat. Slight, brief
@@ -346,7 +346,7 @@ class Pipeline:
         x20 = block_decimate(self.raw.last(int(c.heart_win_s * self.fs)), self.fs // c.breath_fs)
         bh = br.bpm / 60 if br is not None and self.detector.breath_ok(br) else None
         self._heart = estimate_heart(x20, c.breath_fs, c.wavelength, bh, avg=self.heart_avg)
-        self._heart_bpm = self.heart_tracker.update(t, self._heart)
+        self._heart_bpm = self.heart_tracker.update(t, self._heart if present else None)
         self._heart_wait = "" if self._heart_bpm else "measuring..."
         self._expire_last_heart(t)
         if self._heart_bpm is not None:
@@ -392,14 +392,17 @@ class Pipeline:
             x = self.raw.last(int(win * self.fs))
             x20 = block_decimate(x, self.fs // c.breath_fs)
             br = estimate_breathing(x20, c.breath_fs, c.wavelength, c.breath_band, c.breath_noise_band)
-        self.breath_reading.update(t, br.bpm if br is not None else None,
-                                   br is not None and self.detector.breath_ok(br))
         still_abs = still_level(self.raw.last(int(c.still_win_s * self.fs)), self.fs, c.still_band,
                                 self.fs // c.breath_fs, noise_psd=self.noise_psd)
         state = self.detector.step(t, motion_db, br, motion_abs, thr, still_abs)
+        # breathing and heart readings only lock while someone is present: with nobody there the
+        # estimators fit background noise, which must not become a (held) reading
+        present = state != EMPTY
+        self.breath_reading.update(t, br.bpm if br is not None else None,
+                                   present and br is not None and self.detector.breath_ok(br))
         if c.heart:
             near = self.detector.is_motion(motion_db, motion_abs, thr)
-            self._update_heart(t, motion_db - thr if near else None, br)
+            self._update_heart(t, motion_db - thr if near else None, br, present)
         self.history.append((t, motion_db, motion_abs, thr, still_abs))
         far_motion = (self.th.motion_abs_db is not None and motion_db > thr
                       and motion_abs < self.th.motion_abs_db)

@@ -336,3 +336,15 @@ def test_motion_gate_tolerance():
         g.update(t, 0.5)
     assert g.update(3.6, 0.5) == 3.6                # weak but sustained 0.6 s -> reset
 
+
+
+def test_no_heart_lock_while_nobody_is_present():
+    # a heartbeat-like periodic signal with no breathing / motion: the detector says EMPTY, and the
+    # heart estimate must not lock (it used to, which then showed as a held reading / trend line)
+    x = simulate_mix([("still", 90)], [("empty", 90)], seed=44, breath_mm=0.0, heart_mm=0.4,
+                     heart_bpm=66, noise=0.15)
+    st = Pipeline(_heart_cfg(), Thresholds()).feed(x)
+    empty = [s for s in st if s.state == "EMPTY"]
+    assert len(empty) > 100
+    assert all(s.heart_bpm is None for s in empty)
+    assert all(s.breath_bpm is None for s in empty)

@@ -309,8 +309,10 @@ class OsdView:
                     self.last = st
                     if self.heart and (not self.trend or st.t - self.trend[-1][0] >= 0.99):
                         h = st.heart
-                        raw = h.bpm if h is not None and st.state != EMPTY else np.nan
-                        self.trend.append((st.t, np.nan if st.heart_bpm is None else st.heart_bpm, raw))
+                        empty = st.state == EMPTY            # nobody: plot nothing (noise only)
+                        raw = h.bpm if h is not None and not empty else np.nan
+                        lock = st.heart_bpm if st.heart_bpm is not None and not empty else np.nan
+                        self.trend.append((st.t, lock, raw))
                 if sts:
                     self.trend = [r for r in self.trend if self.last.t - r[0] <= 120]
                     self._last_status_wall = time.monotonic()
@@ -532,9 +534,11 @@ class OsdView:
                         msg=self.last.heart_wait.replace(" - nothing may move in range", ""), s=s)
         tw = (np.arange(len(h.wave)) - len(h.wave)) / cfg.breath_fs
         mx = np.abs(h.wave).max() * 1.2 + 1e-12
+        locked = self.last.heart_bpm is not None                # same LOCK rule as the card
         plot(img, rect, [(tw, h.wave, bgr(RED), 2)], (-cfg.heart_win_s, 0), (-mx, mx),
-             "heartbeat (breathing removed)", info=f"{h.bpm:.0f} bpm  conf {h.snr_db:.0f} dB",
-             info_color=bgr(RED) if h.snr_db >= cfg.heart_snr_db else GRAY, s=s)
+             "heartbeat (breathing removed)",
+             info=f"{h.bpm:.0f} bpm  conf {h.snr_db:.0f} dB  " + ("LOCK" if locked else "no lock"),
+             info_color=bgr(RED) if locked else GRAY, s=s)
 
     def _hr_trend(self, img, rect, s):
         tr = np.array(self.trend, float).reshape(-1, 3)
