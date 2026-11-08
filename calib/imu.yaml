@@ -1,0 +1,9 @@
+# Kalibr IMU model for the Crazyflie BMI088 stream (500 Hz, already low-pass filtered by the firmware).
+# Datasheet white noise is ~2.4e-4 rad/s/sqrt(Hz) (gyro) and ~1.7e-3 m/s^2/sqrt(Hz) (accel);
+# the values below are inflated ~5-10x for prop vibration. Tune with Allan variance if VIO struggles.
+rostopic: /imu0
+update_rate: 500.0
+accelerometer_noise_density: 1.0e-2   # [m/s^2/sqrt(Hz)]
+accelerometer_random_walk: 1.0e-3     # [m/s^3/sqrt(Hz)]
+gyroscope_noise_density: 2.0e-3       # [rad/s/sqrt(Hz)]
+gyroscope_random_walk: 2.0e-5         # [rad/s^2/sqrt(Hz)]

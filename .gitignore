@@ -1,0 +1,13 @@
+# Raw recordings and converted datasets are large; keep them out of git
+recordings/
+data/
+*.bag
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Build logs and generated OpenVINS configs (regenerate with calib/kalibr_to_openvins.py)
+docker/build.log
+calib/openvins/*/

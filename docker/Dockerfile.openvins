@@ -1,0 +1,22 @@
+# OpenVINS (rpng) ov_msckf on ROS1 Noetic. Same dependencies as open_vins/Dockerfile_ros1_20_04,
+# minus its CLion/sshd dev setup, with the workspace built into the image.
+# Build: see build_images.sh (source comes from the named context "src" = ~/vio_tools/open_vins).
+FROM osrf/ros:noetic-desktop-full
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      git nano python3-catkin-tools python3-osrf-pycommon \
+      cmake libeigen3-dev libgoogle-glog-dev libgflags-dev libatlas-base-dev libsuitesparse-dev libceres-dev \
+      python3-dev python3-matplotlib python3-numpy python3-psutil python3-tk \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /catkin_ws
+RUN mkdir -p src && catkin init && catkin config --extend /opt/ros/noetic \
+    && catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+COPY --from=src . src/open_vins
+ARG JOBS=4
+RUN catkin build -j${JOBS} --no-status && rm -rf build logs
+
+COPY entrypoint.sh /entrypoint.sh
+WORKDIR /data
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

@@ -1,0 +1,113 @@
+%YAML:1.0 # OpenVINS needs this header
+
+# Starter OpenVINS config for the Crazyflie + Pi Camera Module 3 rig (mono, 640x360 @ 30 fps, IMU 500 Hz).
+# Based on open_vins/config/euroc_mav/estimator_config.yaml; changed values are marked "CF:".
+# calib/kalibr_to_openvins.py copies this file next to the generated kalibr_*_chain.yaml files.
+
+verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
+
+use_fej: true
+integration: "rk4"
+use_stereo: false # CF: one camera
+max_cameras: 1    # CF: one camera
+
+# Refine camera calibration online; Kalibr gives the starting values.
+calib_cam_extrinsics: true
+calib_cam_intrinsics: true
+calib_cam_timeoffset: true # CF: important, the UART + clock-fit offset is only approximate
+calib_imu_intrinsics: false
+calib_imu_g_sensitivity: false
+
+max_clones: 11
+max_slam: 50
+max_slam_in_update: 25
+max_msckf_in_update: 40
+dt_slam_delay: 1
+
+gravity_mag: 9.81
+
+feat_rep_msckf: "GLOBAL_3D"
+feat_rep_slam: "ANCHORED_MSCKF_INVERSE_DEPTH"
+feat_rep_aruco: "ANCHORED_MSCKF_INVERSE_DEPTH"
+
+# Zero-velocity updates. Helps when the platform sits still (hand-carried runs with pauses, before take-off),
+# but a slow hover can be mistaken for "still"; try it on hand-carried demos first.
+try_zupt: false
+zupt_chi2_multipler: 0 # 0 = disparity-based only
+zupt_max_velocity: 0.1
+zupt_noise_multiplier: 10
+zupt_max_disparity: 0.5
+zupt_only_at_beginning: false
+
+# ==================================================================
+# Initialisation: static (keep the drone still >= 3 s at the start, then move)
+# ==================================================================
+
+init_window_time: 2.0
+init_imu_thresh: 0.5     # CF: std of accel [m/s^2] that counts as "started moving"; the motors-off CF is quiet.
+                         #     Raise it (1.0-1.5) if it initialises too early, e.g. from motor spin-up.
+init_max_disparity: 8.0  # CF: scaled for 640 px wide images (EuRoC uses 10 at 752)
+init_max_features: 50
+
+init_dyn_use: false      # set true to allow starting while already moving (less reliable for mono)
+init_dyn_mle_opt_calib: false
+init_dyn_mle_max_iter: 50
+init_dyn_mle_max_time: 0.05
+init_dyn_mle_max_threads: 6
+init_dyn_num_pose: 6
+init_dyn_min_deg: 10.0
+
+init_dyn_inflation_ori: 10
+init_dyn_inflation_vel: 100
+init_dyn_inflation_bg: 10
+init_dyn_inflation_ba: 100
+init_dyn_min_rec_cond: 1e-12
+
+init_dyn_bias_g: [ 0.0, 0.0, 0.0 ]
+init_dyn_bias_a: [ 0.0, 0.0, 0.0 ]
+
+# ==================================================================
+
+record_timing_information: false
+record_timing_filepath: "/tmp/traj_timing.txt"
+
+save_total_state: false
+filepath_est: "/tmp/ov_estimate.txt"
+filepath_std: "/tmp/ov_estimate_std.txt"
+filepath_gt: "/tmp/ov_groundtruth.txt"
+
+# ==================================================================
+# Front end
+# ==================================================================
+
+use_klt: true
+num_pts: 150             # CF: fewer pixels than EuRoC (640x360 vs 752x480)
+fast_threshold: 15       # CF: short exposure + gain 4 gives lower contrast; lower finds more corners
+grid_x: 6                # CF: 16:9 image -> wider grid
+grid_y: 4
+min_px_dist: 10
+knn_ratio: 0.70
+track_frequency: 31.0    # CF: track every frame at 30 fps
+downsample_cameras: false
+num_opencv_threads: 4
+histogram_method: "HISTOGRAM" # NONE, HISTOGRAM, CLAHE (try CLAHE in dim rooms)
+
+use_aruco: false
+num_aruco: 1024
+downsize_aruco: true
+
+# ==================================================================
+# Measurement noise
+# ==================================================================
+
+up_msckf_sigma_px: 1.5   # CF: rolling shutter + low resolution, slightly less trust per pixel
+up_msckf_chi2_multipler: 1
+up_slam_sigma_px: 1.5
+up_slam_chi2_multipler: 1
+up_aruco_sigma_px: 1
+up_aruco_chi2_multipler: 1
+
+use_mask: false
+
+relative_config_imu: "kalibr_imu_chain.yaml"
+relative_config_imucam: "kalibr_imucam_chain.yaml"
