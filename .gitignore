@@ -11,3 +11,4 @@ __pycache__/
 # Build logs and generated OpenVINS configs (regenerate with calib/kalibr_to_openvins.py)
 docker/build.log
 calib/openvins/*/
+!calib/openvins/crazyflie/
