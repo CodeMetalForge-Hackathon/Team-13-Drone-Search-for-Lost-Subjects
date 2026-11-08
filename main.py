@@ -35,6 +35,8 @@ def build_config(a) -> Config:
         cfg.breath_win_s = a.breath_win
     cfg.auto_floor = not getattr(a, "no_auto_floor", False)
     cfg.heart = bool(getattr(a, "heart", False))
+    if cfg.heart:
+        cfg.breath_min_win_s = 10.0     # breathing reading appears ~8 s before heart rate
     cfg.validate()
     return cfg
 
@@ -102,7 +104,14 @@ def cmd_run(a):
             import matplotlib
             if a.backend:
                 matplotlib.use(a.backend)
+            import signal
+
+            from presence import viz
             from presence.viz import HeartView, LiveView
+            # Tk swallows KeyboardInterrupt inside callbacks; route SIGINT/SIGTERM through a flag
+            # so the window closes and the recording is saved.
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(sig, lambda *_: viz.STOP.set())
             orig_read = src.read
 
             def read_and_record(timeout=0.5):

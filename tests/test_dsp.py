@@ -281,3 +281,29 @@ def test_heart_last_reading_held_after_walking_up():
     assert all(s.heart_last_bpm is not None for s in walking)   # ...but the last reading is held
     assert abs(walking[-1].heart_last_bpm - 66) < 4
     assert walking[-1].heart_last_age_s > 5
+
+
+def test_breathing_reading_arrives_before_heart_and_is_held():
+    cfg = _heart_cfg()
+    cfg.breath_min_win_s = 10.0
+    x = simulate_mix([("walk", 10), ("still", 60), ("walk", 15)], [("empty", 85)], seed=71,
+                     breath_bpm=14, heart_mm=0.4, heart_bpm=68, noise=0.15)
+    st = Pipeline(cfg, Thresholds()).feed(x)
+    tb = next(s.t for s in st if s.breath_bpm is not None)
+    th = next(s.t for s in st if s.heart_bpm is not None)
+    assert tb < th and tb - 10 < 18
+    assert abs(np.median([s.breath_bpm for s in st if s.breath_bpm is not None]) - 14) < 1
+    walking = [s for s in st if 75 < s.t < 85]
+    assert all(s.breath_bpm is None and s.breath_last_bpm is not None for s in walking)
+
+
+def test_small_fidget_resets_heart_but_not_breathing():
+    cfg = _heart_cfg()
+    cfg.breath_min_win_s = 10.0
+    x = simulate_mix([("still", 77)], [("empty", 77)], seed=72, breath_bpm=14, heart_mm=0.4,
+                     heart_bpm=68, noise=0.15, fidgets=[(45, 1.0, 0.3)])   # brief hand movement
+    st = Pipeline(cfg, Thresholds()).feed(x)
+    after = [s for s in st if 48 < s.t < 60]
+    assert any(s.heart_wait.startswith("hold still") for s in after)        # heart restarted
+    assert all(s.breath_wait == "" for s in after)                           # breathing did not
+    assert sum(s.breath_bpm is not None for s in after) > 0.8 * len(after)  # and stays locked

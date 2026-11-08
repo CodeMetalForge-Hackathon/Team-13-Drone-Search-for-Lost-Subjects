@@ -65,6 +65,10 @@ class Config:
     heart_span_bpm: float = 8.0
     heart_last_avg_s: float = 20.0       # "last reading" = mean of locked bpm over this moving window
     heart_last_hold_s: float = 300.0     # keep showing the last reading this long, then clear it
+    breath_lock_s: float = 3.0           # breathing reading: confident + consistent this long -> shown
+    breath_lock_span_bpm: float = 2.5
+    breath_motion_margin_db: float = 6.0  # heart mode: breathing only restarts on motion this much
+                                          # stronger than the heart gate (small fidgets don't reset it)
 
     # --- detector timing ---------------------------------------------------
     update_s: float = 0.2

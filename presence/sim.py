@@ -19,7 +19,7 @@ def simulate_slow_time(segments, fs: float = 200.0, fc: float = 2.45e9, *,
                        walk_amp: float = 6.0, breath_amp: float = 3.0, breath_bpm: float = 15.0,
                        breath_mm: float = 5.0, drift_rad_per_s: float = 2e-4,
                        fan_amp: float = 0.0, heart_mm: float = 0.0, heart_bpm: float = 70.0,
-                       seed: int = 0) -> np.ndarray:
+                       fidgets=(), seed: int = 0) -> np.ndarray:
     """Slow-time complex baseband for a list of (kind, seconds[, amp_scale]) segments,
     kind in empty/walk/still. amp_scale scales the person's echo (distance: ~ (r0/r)^2).
 
@@ -68,6 +68,14 @@ def simulate_slow_time(segments, fs: float = 200.0, fc: float = 2.45e9, *,
     drift = np.cumsum(rng.normal(0, drift_rad_per_s / np.sqrt(fs), n))
     noise_v = noise / np.sqrt(2) * (rng.normal(size=n) + 1j * rng.normal(size=n))
     out = clutter * np.exp(1j * drift) + tgt + noise_v
+    # fidgets: (start_s, dur_s, amp) - a small limb echo swinging ~10 cm with a smooth envelope,
+    # added on top of the (continuously breathing) body
+    tt_all = np.arange(n) / fs
+    for t0f, durf, ampf in fidgets:
+        m = (tt_all >= t0f) & (tt_all < t0f + durf)
+        u = (tt_all[m] - t0f) / durf
+        env = np.sin(np.pi * u) ** 2
+        out[m] += ampf * env * np.exp(1j * k * (r + 0.05 * np.sin(2 * np.pi * u)))
     if fan_amp:
         tt = np.arange(n) / fs
         out += fan_amp * np.exp(1j * (2.5 * np.sin(2 * np.pi * 12.0 * tt) + 0.3 * rng.normal(size=n).cumsum() / fs))

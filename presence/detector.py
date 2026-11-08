@@ -37,6 +37,54 @@ class Ring:
         return self.buf[idx]
 
 
+class LockedReading:
+    """Turns noisy per-update estimates into a displayed reading.
+
+    live: shown only after `lock_s` of confident estimates whose spread is <= `span`.
+    last: moving average of the live value over `avg_s`, held for `hold_s` after the lock ends,
+          so a person can walk up and read it.
+    """
+
+    def __init__(self, lock_s: float, span: float, avg_s: float, hold_s: float):
+        self.lock_s, self.span, self.avg_s, self.hold_s = lock_s, span, avg_s, hold_s
+        self.cand: deque = deque()      # (t, value) of consecutive confident estimates
+        self.locks: deque = deque()     # (t, live value) for the moving average
+        self.live: float | None = None
+        self.last: float | None = None
+        self.last_t = -np.inf
+
+    def update(self, t: float, value: float | None, ok: bool) -> None:
+        if value is None or not ok:
+            self.cand.clear()
+        else:
+            self.cand.append((t, value))
+            while t - self.cand[0][0] > self.lock_s:
+                self.cand.popleft()
+        self.live = None
+        if self.cand and self.cand[-1][0] - self.cand[0][0] >= self.lock_s - 0.25:
+            v = np.array([b for _, b in self.cand])
+            if np.ptp(v) <= self.span:
+                self.live = float(np.median(v))
+            else:
+                self.cand.popleft()
+        if self.live is not None:
+            if self.locks and t - self.locks[-1][0] > self.avg_s:
+                self.locks.clear()
+            self.locks.append((t, self.live))
+            while t - self.locks[0][0] > self.avg_s:
+                self.locks.popleft()
+            self.last = float(np.mean([b for _, b in self.locks]))
+            self.last_t = t
+        elif self.last is not None and t - self.last_t > self.hold_s:
+            self.last, self.locks = None, deque()
+
+    def age(self, t: float) -> float:
+        return t - self.last_t if self.last is not None else 0.0
+
+    def span_s(self) -> float:
+        return self.locks[-1][0] - self.locks[0][0] if self.locks else 0.0
+
+
 class AutoFloor:
     """Learns the background motion level while running (no empty-room calibration needed).
 
@@ -180,6 +228,10 @@ class Status:
     heart_last_bpm: float | None = None   # moving-window average of the most recent lock (held)
     heart_last_age_s: float = 0.0         # seconds since that lock ended / was last updated
     heart_last_span_s: float = 0.0        # how many seconds of locked readings the average covers
+    breath_bpm: float | None = None       # locked breathing rate (breaths/min)
+    breath_last_bpm: float | None = None  # held moving average of the last breathing lock
+    breath_last_age_s: float = 0.0
+    breath_wait: str = ""                 # breathing's own stillness countdown
     proximity: bool = False
     jumps: int = 0
     extra: dict = field(default_factory=dict)
@@ -211,6 +263,10 @@ class Pipeline:
         self._heart_locks: deque = deque()      # (t, bpm) of locked readings, moving window
         self._heart_last: float | None = None
         self._heart_last_t = -np.inf
+        self._last_big_motion_t = -np.inf
+        self._breath_wait = ""
+        self.breath_reading = LockedReading(cfg.breath_lock_s, cfg.breath_lock_span_bpm,
+                                            cfg.heart_last_avg_s, cfg.heart_last_hold_s)
         self._pending = 0
         self.floor = AutoFloor(cfg) if (cfg.auto_floor if auto_floor is None else auto_floor) else None
         self.history: deque = deque(maxlen=int(cfg.history_s / cfg.update_s))  # (t, ratio, abs, thr)
@@ -293,16 +349,29 @@ class Pipeline:
         if self.floor is not None:
             self.floor.update(t, motion_db, thr)
             thr = self.floor.threshold(thr)
-        if self.gate:
+        if c.heart:
+            # independent breathing gate: only clearly bigger motion restarts breathing, so the
+            # strict heart gate (any in-range motion) never resets the breathing timing
+            m = c.breath_motion_margin_db
+            big = motion_db > thr + m and (self.th.motion_abs_db is None
+                                           or motion_abs >= self.th.motion_abs_db + m)
+            if big:
+                self._last_big_motion_t = t
+            quiet = t - self._last_big_motion_t - c.motion_win_s
+        elif self.gate:
             quiet = t - self.detector.last_motion_t - c.motion_win_s
         else:
             quiet = np.inf
+        self._breath_wait = ("" if quiet >= c.breath_min_win_s else
+                             f"hold still ({max(0.0, quiet):.0f}/{c.breath_min_win_s:.0f} s)")
         win = min(c.breath_win_s, quiet, t)
         br = None
         if win >= c.breath_min_win_s:
             x = self.raw.last(int(win * self.fs))
             x20 = block_decimate(x, self.fs // c.breath_fs)
             br = estimate_breathing(x20, c.breath_fs, c.wavelength, c.breath_band, c.breath_noise_band)
+        self.breath_reading.update(t, br.bpm if br is not None else None,
+                                   br is not None and self.detector.breath_ok(br))
         still_abs = still_level(self.raw.last(int(c.still_win_s * self.fs)), self.fs, c.still_band,
                                 self.fs // c.breath_fs, noise_psd=self.noise_psd)
         state = self.detector.step(t, motion_db, br, motion_abs, thr, still_abs)
@@ -320,6 +389,8 @@ class Pipeline:
                       heart_last_age_s=t - self._heart_last_t if self._heart_last is not None else 0.0,
                       heart_last_span_s=(self._heart_locks[-1][0] - self._heart_locks[0][0]
                                          if self._heart_locks else 0.0),
+                      breath_bpm=self.breath_reading.live, breath_last_bpm=self.breath_reading.last,
+                      breath_last_age_s=self.breath_reading.age(t), breath_wait=self._breath_wait,
                       jumps=self.jump.jumps if self.jump else 0)
 
 

@@ -1,9 +1,12 @@
 """Live matplotlib display: Doppler spectrogram, motion metric, breathing waveform, state."""
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.patches import FancyBboxPatch
 
 from .detector import EMPTY, MOVING, STILL, Pipeline, Status, format_status
 from .dsp import doppler_spectrogram
@@ -12,6 +15,7 @@ from .radio import Source
 STATE_COLORS = {EMPTY: "#6b7280", MOVING: "#dc2626", STILL: "#16a34a", "STILL?": "#ca8a04",
                 "PRESENT": "#15803d"}
 SPEC_SECONDS = 20.0
+STOP = threading.Event()   # set from a signal handler; checked by the animation timer (main thread)
 
 
 class LiveView:
@@ -79,6 +83,9 @@ class LiveView:
         self.anim = FuncAnimation(self.fig, self._frame, interval=interval_ms, cache_frame_data=False)
 
     def _frame(self, _):
+        if STOP.is_set():               # SIGINT / SIGTERM: close the window -> normal shutdown path
+            plt.close(self.fig)
+            return
         x = self.src.read(timeout=0.05)
         for s in self.pipe.feed(x):
             self.last = s
@@ -161,6 +168,38 @@ def _ago(sec: float) -> str:
     return f"{sec} s ago" if sec < 60 else f"{sec // 60} min {sec % 60:02d} s ago"
 
 
+GREY, ORANGE, YELLOW, GREEN, DKGREEN, RED, DKRED = ("#6b7280", "#ea580c", "#ca8a04", "#16a34a",
+                                                     "#166534", "#dc2626", "#991b1b")
+
+
+def _style(ax, title):
+    ax.set_title(title, fontsize=10, loc="left", color="#374151")
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(labelsize=8, colors="#4b5563")
+    ax.grid(alpha=0.25, lw=0.6)
+
+
+class _Card:
+    """Fixed-size coloured card: small heading, big value, one caption line."""
+
+    def __init__(self, fig, spec, heading):
+        ax = fig.add_subplot(spec)
+        ax.axis("off")
+        self.box = FancyBboxPatch((0.02, 0.04), 0.96, 0.92, boxstyle="round,pad=0,rounding_size=0.06",
+                                  transform=ax.transAxes, fc=GREY, ec="none", mutation_aspect=0.3)
+        ax.add_patch(self.box)
+        kw = dict(transform=ax.transAxes, ha="center", va="center", color="white")
+        ax.text(0.5, 0.80, heading, fontsize=10, alpha=0.85, **kw)
+        self.value = ax.text(0.5, 0.48, "--", fontsize=23, fontweight="bold", **kw)
+        self.caption = ax.text(0.5, 0.16, "", fontsize=9, **kw)
+
+    def set(self, value, caption, color):
+        self.value.set_text(value)
+        self.caption.set_text(caption)
+        self.box.set_facecolor(color)
+
+
 class HeartView:
     """Heart-rate focused live view (run --heart)."""
 
@@ -171,57 +210,70 @@ class HeartView:
         self.trend: list[tuple[float, float | None, float | None]] = []   # (t, locked, raw)
         cfg = pipe.cfg
 
-        self.fig = plt.figure(figsize=(12, 8))
+        self.fig = plt.figure(figsize=(13, 9), facecolor="white")
         self.fig.canvas.manager.set_window_title("Pluto heart-rate radar")
-        gs = self.fig.add_gridspec(3, 2, height_ratios=[0.6, 1.6, 1.6], hspace=0.5, wspace=0.25)
-        self.ax_state = self.fig.add_subplot(gs[0, :])
-        self.ax_state.axis("off")
-        self.state_txt = self.ax_state.text(0.5, 0.55, "starting...", ha="center", va="center", fontsize=28,
-                                            fontweight="bold", color="white", transform=self.ax_state.transAxes,
-                                            bbox=dict(boxstyle="round,pad=0.4", fc="#6b7280", ec="none"))
-        self.sub_txt = self.ax_state.text(0.5, -0.25, "", ha="center", va="center", fontsize=11,
-                                          color="#374151", transform=self.ax_state.transAxes)
+        outer = self.fig.add_gridspec(2, 1, height_ratios=[0.8, 4.4], hspace=0.12,
+                                      left=0.06, right=0.97, top=0.98, bottom=0.06)
+        cards = outer[0].subgridspec(1, 3, wspace=0.05)
+        gs = outer[1].subgridspec(3, 2, height_ratios=[1.35, 1.05, 1.2], hspace=0.55, wspace=0.18)
+        self.c_status = _Card(self.fig, cards[0], "STATUS")
+        self.c_breath = _Card(self.fig, cards[1], "BREATHING")
+        self.c_heart = _Card(self.fig, cards[2], "HEART RATE")
 
-        self.ax_wave = self.fig.add_subplot(gs[1, 0])
-        (self.wave_line,) = self.ax_wave.plot([], [], color="#dc2626", lw=1.3)
-        self.ax_wave.set_title("heartbeat waveform (breathing removed)", fontsize=10)
+        # Doppler spectrogram (all motion, incl. beyond the range boundary)
+        self.ax_dop = self.fig.add_subplot(gs[0, :])
+        n_spec = int(SPEC_SECONDS * pipe.fs)
+        f, _, P = doppler_spectrogram(np.zeros(n_spec, complex) + 1e-6, pipe.fs)
+        self.im = self.ax_dop.imshow(P, aspect="auto", origin="lower", cmap="magma",
+                                     extent=[-SPEC_SECONDS, 0, f[0], f[-1]], interpolation="nearest")
+        self.ax_dop.set_ylim(-60, 60)
+        _style(self.ax_dop, "Doppler spectrogram  (motion; "
+               f"{cfg.wavelength / 2 * 100:.1f} cm/s per Hz)")
+        self.ax_dop.grid(False)
+        self.ax_dop.set_ylabel("Hz", fontsize=8)
+
+        self.ax_br = self.fig.add_subplot(gs[1, 0])
+        (self.br_line,) = self.ax_br.plot([], [], color=GREEN, lw=1.4)
+        self.ax_br.set_xlim(-cfg.breath_win_s, 0)
+        self.ax_br.set_yticks([])
+        _style(self.ax_br, "breathing waveform")
+        self.br_txt = self.ax_br.text(0.99, 1.04, "", transform=self.ax_br.transAxes, ha="right",
+                                      fontsize=8, color="#6b7280")
+
+        self.ax_wave = self.fig.add_subplot(gs[1, 1])
+        (self.wave_line,) = self.ax_wave.plot([], [], color=RED, lw=1.2)
         self.ax_wave.set_xlim(-cfg.heart_win_s, 0)
-        self.ax_wave.set_xlabel("time (s)")
         self.ax_wave.set_yticks([])
-
-        self.ax_spec = self.fig.add_subplot(gs[1, 1])
-        (self.spec_line,) = self.ax_spec.plot([], [], color="#7c3aed", lw=1.3)
-        self.thr_line = self.ax_spec.axhline(cfg.heart_snr_db, color="#9ca3af", ls="--", lw=1)
-        (self.peak_mark,) = self.ax_spec.plot([], [], "o", color="#dc2626")
-        self.breath_marks = [self.ax_spec.axvline(np.nan, color="#16a34a", ls=":", lw=1) for _ in range(8)]
-        if ref_bpm:
-            self.ax_spec.axvline(ref_bpm, color="#0891b2", lw=1.5, alpha=0.6)
-        self.ax_spec.set_xlim(42, 180)
-        self.ax_spec.set_title("heart spectrum (dB over median)  : breathing harmonics", fontsize=10)
-        self.ax_spec.set_xlabel("bpm")
+        _style(self.ax_wave, "heartbeat waveform (breathing removed)")
 
         self.ax_trend = self.fig.add_subplot(gs[2, 0])
-        (self.raw_pts,) = self.ax_trend.plot([], [], ".", color="#c4b5fd", ms=4, label="per-second estimate")
-        (self.lock_line,) = self.ax_trend.plot([], [], color="#dc2626", lw=2, label="locked")
+        (self.raw_pts,) = self.ax_trend.plot([], [], ".", color="#c4b5fd", ms=4, label="estimate")
+        (self.lock_line,) = self.ax_trend.plot([], [], color=RED, lw=2, label="locked")
         if ref_bpm:
             self.ax_trend.axhline(ref_bpm, color="#0891b2", lw=1.5, alpha=0.6, label="reference")
         self.ax_trend.set_xlim(-120, 0)
         self.ax_trend.set_ylim(45, 125)
-        self.ax_trend.set_title("heart rate (bpm)", fontsize=10)
-        self.ax_trend.set_xlabel("time (s)")
-        self.ax_trend.legend(fontsize=7, loc="upper left")
+        self.ax_trend.set_xlabel("time (s)", fontsize=8)
+        _style(self.ax_trend, "heart rate history (bpm)")
+        self.ax_trend.legend(fontsize=7, loc="upper left", frameon=False, ncol=3)
 
-        self.ax_br = self.fig.add_subplot(gs[2, 1])
-        (self.br_line,) = self.ax_br.plot([], [], color="#16a34a", lw=1.2)
-        self.ax_br.set_xlim(-cfg.breath_win_s, 0)
-        self.ax_br.set_title("breathing", fontsize=10)
-        self.ax_br.set_xlabel("time (s)")
-        self.ax_br.set_yticks([])
-        self.br_txt = self.ax_br.text(0.02, 0.95, "", transform=self.ax_br.transAxes, va="top", fontsize=9)
+        self.ax_spec = self.fig.add_subplot(gs[2, 1])
+        (self.spec_line,) = self.ax_spec.plot([], [], color="#7c3aed", lw=1.2)
+        self.ax_spec.axhline(cfg.heart_snr_db, color="#9ca3af", ls="--", lw=1)
+        (self.peak_mark,) = self.ax_spec.plot([], [], "o", color=RED, ms=5)
+        self.breath_marks = [self.ax_spec.axvline(np.nan, color=GREEN, ls=":", lw=1) for _ in range(8)]
+        if ref_bpm:
+            self.ax_spec.axvline(ref_bpm, color="#0891b2", lw=1.5, alpha=0.6)
+        self.ax_spec.set_xlim(42, 180)
+        self.ax_spec.set_xlabel("bpm", fontsize=8)
+        _style(self.ax_spec, "heart spectrum (dB)   - - lock threshold   : breathing harmonics")
 
         self.anim = FuncAnimation(self.fig, self._frame, interval=interval_ms, cache_frame_data=False)
 
     def _frame(self, _):
+        if STOP.is_set():               # SIGINT / SIGTERM: close the window -> normal shutdown path
+            plt.close(self.fig)
+            return
         x = self.src.read(timeout=0.05)
         for s in self.pipe.feed(x):
             self.last = s
@@ -229,50 +281,92 @@ class HeartView:
                 self.on_status(s)
             h = s.heart
             if not self.trend or s.t - self.trend[-1][0] >= 0.99:
-                self.trend.append((s.t, s.heart_bpm, h.bpm if h is not None else None))
+                raw = h.bpm if h is not None and s.state != EMPTY else None   # no dots for an empty room
+                self.trend.append((s.t, s.heart_bpm, raw))
         if self.src.finished and not len(x):
             self.anim.event_source.stop()
         s = self.last
         if s is None:
             return
         self.trend = [r for r in self.trend if s.t - r[0] <= 120]
+        cfg = self.pipe.cfg
+        bnd = self.pipe.th.boundary_m
 
-        moving = s.motion_db > s.motion_thr and not s.far_motion
-        if s.heart_bpm is not None:
-            avg = s.heart_last_bpm if s.heart_last_bpm is not None else s.heart_bpm
-            txt, col = f"♥  {avg:.0f} bpm", "#dc2626"
-        elif s.heart_last_bpm is not None:
-            # hold the last reading so the subject can walk up and read it
-            txt, col = f"♥  {s.heart_last_bpm:.0f} bpm   (last reading, {_ago(s.heart_last_age_s)})", "#991b1b"
-        elif moving:
-            txt, col = "MOTION IN RANGE - hold still", "#6b7280"
+        # --- cards ---
+        rng = f"within ~{bnd:g} m" if bnd else "in range"
+        far = f"motion beyond ~{bnd:g} m ignored" if (s.far_motion and bnd) else ""
+        if s.state == MOVING:
+            self.c_status.set("MOVING", far or f"person moving {rng}", ORANGE)
+        elif s.heart_bpm is not None:
+            self.c_status.set("STILL", "breathing + heart rate locked", RED)
+        elif s.breath_bpm is not None:
+            self.c_status.set("STILL", "breathing locked, heart measuring", GREEN)
+        elif s.state == STILL:
+            self.c_status.set("STILL", "acquiring - sit still 0.3-0.5 m away", YELLOW)
         else:
-            txt, col = "measuring heart rate...", "#ca8a04"
-        self.state_txt.set_text(txt)
-        self.state_txt.get_bbox_patch().set_facecolor(col)
-        sub = s.heart_wait or ""
-        if s.far_motion:
-            sub += "   (motion beyond range boundary ignored)"
-        if s.heart_last_bpm is not None and s.heart_bpm is None:
-            sub = (f"average of {max(s.heart_last_span_s, 1):.0f} s of locked readings   |   for a new reading "
-                   f"sit still 0.3-0.5 m in front" + (f"   ({s.heart_wait})" if s.heart_wait else ""))
-        elif s.heart is not None:
-            sub = f"estimate {s.heart.bpm:.0f} bpm, confidence {s.heart.snr_db:.1f} dB (lock needs >= " \
-                  f"{self.pipe.cfg.heart_snr_db:.0f} dB for {self.pipe.cfg.heart_lock_s:.0f} s)"
-            if self.ref:
-                sub += f"   |   reference {self.ref:.0f} bpm"
-        self.sub_txt.set_text(sub)
+            self.c_status.set("NO PERSON", far or f"nobody {rng}", GREY)
+
+        b = s.breath
+        if s.breath_bpm is not None:
+            avg = s.breath_last_bpm if s.breath_last_bpm is not None else s.breath_bpm
+            self.c_breath.set(f"{avg:.0f} /min", f"live  -  SNR {b.snr_db:.0f} dB" if b else "live", GREEN)
+        elif s.breath_last_bpm is not None:
+            self.c_breath.set(f"{s.breath_last_bpm:.0f} /min", f"last reading, {_ago(s.breath_last_age_s)}",
+                              DKGREEN)
+        elif s.breath_wait:
+            self.c_breath.set("--", s.breath_wait, GREY)
+        elif s.state != EMPTY:
+            self.c_breath.set("...", "measuring", YELLOW)
+        else:
+            self.c_breath.set("--", "", GREY)
 
         h = s.heart
+        if s.heart_bpm is not None:
+            avg = s.heart_last_bpm if s.heart_last_bpm is not None else s.heart_bpm
+            self.c_heart.set(f"{avg:.0f} bpm", f"average of {max(s.heart_last_span_s, 1):.0f} s locked", RED)
+        elif s.heart_last_bpm is not None:
+            self.c_heart.set(f"{s.heart_last_bpm:.0f} bpm", f"last reading, {_ago(s.heart_last_age_s)}", DKRED)
+        elif s.heart_wait.startswith("hold still"):
+            self.c_heart.set("--", s.heart_wait.replace(" - nothing may move in range", ""), GREY)
+        elif s.state == EMPTY:
+            self.c_heart.set("--", "", GREY)
+        elif h is not None:
+            self.c_heart.set("...", f"measuring - confidence {h.snr_db:.0f}/{cfg.heart_snr_db:.0f} dB", YELLOW)
+        else:
+            self.c_heart.set("...", "measuring", YELLOW)
+
+        # --- spectrogram ---
+        n_spec = int(SPEC_SECONDS * self.pipe.fs)
+        xc = self.pipe.hp.last(n_spec)
+        filled = len(xc) / n_spec
+        if len(xc) < n_spec:
+            xc = np.concatenate([np.zeros(n_spec - len(xc), complex), xc])
+        _, _, P = doppler_spectrogram(xc, self.pipe.fs)
+        valid = P[:, int(P.shape[1] * (1 - filled)):] if filled < 1 else P
+        P = np.maximum(P, valid.min()) if valid.size else P
+        lo = np.percentile(valid if valid.size else P, 30)
+        self.im.set_data(P)
+        self.im.set_clim(lo, max(lo + 25, P.max()))
+
+        # --- waveforms ---
+        if b is not None:
+            tb = (np.arange(len(b.wave)) - len(b.wave)) / cfg.breath_fs
+            self.br_line.set_data(tb, b.wave)
+            m = np.abs(b.wave).max() * 1.2 + 1e-12
+            self.ax_br.set_ylim(-m, m)
+            self.br_txt.set_text(f"estimate {b.bpm:.1f} /min   SNR {b.snr_db:.0f} dB   ACF {b.acf:.2f}"
+                                 + ("" if self.pipe.detector.breath_ok(b) else "   (weak)"))
+        else:
+            self.br_line.set_data([], [])
+            self.br_txt.set_text("")
         if h is not None:
-            fs = self.pipe.cfg.breath_fs
-            tw = (np.arange(len(h.wave)) - len(h.wave)) / fs
+            tw = (np.arange(len(h.wave)) - len(h.wave)) / cfg.breath_fs
             self.wave_line.set_data(tw, h.wave)
             m = np.abs(h.wave).max() * 1.2 + 1e-12
             self.ax_wave.set_ylim(-m, m)
             self.spec_line.set_data(60 * h.freqs, h.score)
             self.peak_mark.set_data([h.bpm], [h.snr_db])
-            self.ax_spec.set_ylim(min(-5, h.score.min()), max(h.snr_db + 4, self.pipe.cfg.heart_snr_db + 4))
+            self.ax_spec.set_ylim(min(-5, h.score.min()), max(h.snr_db + 4, cfg.heart_snr_db + 4))
             for k, ln in enumerate(self.breath_marks, start=1):
                 ln.set_xdata([60 * k * h.breath_hz] * 2 if h.breath_hz else [np.nan] * 2)
         else:
@@ -285,17 +379,6 @@ class HeartView:
                            for r in self.trend])
             self.raw_pts.set_data(tr[:, 0], tr[:, 2])
             self.lock_line.set_data(tr[:, 0], tr[:, 1])
-
-        b = s.breath
-        if b is not None:
-            tb = (np.arange(len(b.wave)) - len(b.wave)) / self.pipe.cfg.breath_fs
-            self.br_line.set_data(tb, b.wave)
-            m = np.abs(b.wave).max() * 1.2 + 1e-12
-            self.ax_br.set_ylim(-m, m)
-            self.br_txt.set_text(f"{b.bpm:.1f} breaths/min" + ("" if self.pipe.detector.breath_ok(b) else " (weak)"))
-        else:
-            self.br_line.set_data([], [])
-            self.br_txt.set_text("")
 
     def show(self):
         plt.show()
