@@ -296,6 +296,12 @@ def main():
     if zero.any():
         print(f"warning: {zero.sum()} IMU samples are all zeros (sensors not yet calibrated at the start?)",
               file=sys.stderr)
+    lost = report["imu"]["lost_packets"]
+    expected = lost + len(imu["seq"])
+    if lost > 0.02 * expected:
+        print(f"WARNING: {lost} of {expected} IMU packets ({lost / expected:.0%}) were lost. VIO will drift or "
+              "diverge. Losses only while moving usually mean a loose TX2/GND wire: solder or secure it.",
+              file=sys.stderr)
     cf_to_pi, clock, clock_dbg = fit_clock(imu["t_cf_us"], imu["arr_ns"])
     report["clock_fit"] = clock
     t_imu = cf_to_pi(imu["t_cf_us"])

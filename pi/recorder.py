@@ -179,6 +179,7 @@ def main():
     t_start = time.monotonic()
     t_print = t_start
     n = dropped_q = 0
+    nbytes_prev = 0
     while not stop.is_set():
         req = cam.capture_request()
         try:
@@ -197,9 +198,13 @@ def main():
             dropped_q += 1
         now = time.monotonic()
         if now - t_print > 2.0:
+            # 500 packets/s x 34 bytes = 17 kB/s; much less means IMU packets are being lost
+            imu_rate = (imu.nbytes - nbytes_prev) / (now - t_print) / (500 * 34)
+            nbytes_prev = imu.nbytes
             t_print = now
+            warn = f"  <-- IMU at {imu_rate:.0%}: check the TX2/GND wires" if imu_rate < 0.9 else ""
             print(f"  {now - t_start:6.1f}s  frames={n}  writer_drops={dropped_q}  "
-                  f"imu={imu.nbytes / 1024:.0f} KiB")
+                  f"imu={imu.nbytes / 1024:.0f} KiB{warn}")
         if args.duration and now - t_start >= args.duration:
             stop.set()
 
