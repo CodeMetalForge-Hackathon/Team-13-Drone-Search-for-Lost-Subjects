@@ -65,13 +65,19 @@ A new profile, such as a child or an elderly person with dementia, is added by s
 
 A profile is a set of priors and weight tables, not a prediction about an individual. Evidence can move belief between branches, and no branch that evidence has not excluded is ever set to zero (a floor weight `CAL-004` is kept).
 
+**Scenarios.** Profile A is a downed pilot in a **contested, GPS-denied environment**. Profile B is a **civilian hiker in a wildfire**. Neither is assumed to carry a working emitter.
+
+**Wildfire factors (profile B).** The fire perimeter and its spread direction act as a repeller and a barrier. Subjects flee fire, avoid running uphill, and head for water, roads, or already-burned ground, and the perimeter can cut off routes (`HYP`). Public fire data: NASA FIRMS (R-26) and NIFC (R-27). Smoke reduces optical detection (Section 4.2 and 6).
+
+**Hide and stay still (`ENG`/`HYP`, team assumption, not doctrine).** A pilot may hide and stay stationary on hearing drone noise. Vital-sign radar needs the subject stationary for about 15 s. This requirement is an engineering assumption to test, supported by the pilot hiding or an injured or exhausted hiker. Treat a moving subject as a Doppler detection instead.
+
 | | Profile A: downed pilot (SERE-trained) | Profile B: civilian hiker |
 |---|---|---|
 | Training | AFH 10-644 teaches what isolated personnel (IP) should do | Common sense and basic outdoor judgment. No assumed survival doctrine |
 | Emitters | None detectable (baseline). Kit may be lost, damaged, or left behind | None detectable (baseline). A phone or watch may exist with unknown charge and service |
 | Likely branches | Stay near the site; delayed travel decision; planned move to a recovery point; hide and evade under threat | Stay put; follow trails or streams; wander disoriented; head for high ground or water |
 | Key assumptions | Shock then coping, so major decisions are delayed (`DOC` D-06, D-18). Staying near the site aided most recoveries in permissive areas (`DOC` D-17). Choose high, clear pickup terrain (`DOC` D-33) | All behavior is `HYP`, to be checked against lost-person literature (R-07) and incident data (R-08). SERE doctrine is never used as evidence for hikers |
-| Detectability | A single person is hard to see from the air (`DOC` D-21). A parachute in a tree is a signal (`DOC` D-30) | Bright clothing helps. Dense canopy and relief hide the subject. All `ENG` |
+| Detectability | A single person is hard to see from the air (`DOC` D-21). A parachute in a tree is a signal (`DOC` D-30) | Bright clothing helps. Dense canopy and relief hide the subject. All `ENG`. In wildfire, smoke degrades optical detection and lowers pd for camera sensors (`ENG`) |
 
 **Threat context flag (profile A only).** An enemy-presence flag `τ ∈ {0,1}` is drawn once from `p(τ)` (`CAL-020`). When `τ = 1`:
 
@@ -171,6 +177,9 @@ Starter template (copy once per profile). No numbers are supplied; fill every `W
 | Trail or road nearby | on / within `CAL-xxx` m / none | `W-040` to `W-042` | operator or data | Profile A under threat: roads penalized (`DOC` D-39) |
 | Water nearby | yes / no | `W-050`, `W-051` | operator or data | |
 | Shelter or high ground | yes / no | `W-060`, `W-061` | operator or data | |
+| Fire perimeter and spread direction (B in wildfire) | inside / near and downwind / outside / already burned | `W-070` to `W-073` | operator, R-26, R-27 | Repeller and barrier; burned ground attracts. Refresh with fire data each pass |
+| Water and roads in wildfire (B) | within `CAL-xxx` m / none | `W-074`, `W-075` | operator or data | Attractors when fleeing fire |
+| Interaction: uphill × active fire | uphill & fire below (B) | `W-103` multiplier | operator or data | Subjects avoid uphill runs (`HYP`); fire spreads fast uphill |
 | Interaction: slope × injury | steep & injured, etc. | `W-100` multiplier | operator or data | Injured subjects rarely climb |
 | Interaction: weather × shelter | cold & sheltered, etc. | `W-101` multiplier | operator or data | |
 | Interaction: road × threat | road & `τ = 1` (A only) | `W-102` multiplier | SOP or data | |
@@ -413,6 +422,8 @@ Not found in AFH 10-644: cellular, Wi-Fi, or Bluetooth detection (tagged `ENG`),
 | R-17 | RTL-SDR.com, SDR roundup (R820T/R820T2 tuning range) | [site](https://www.rtl-sdr.com/roundup-software-defined-radios/) |
 | R-18 | RTL-SDR.com, receiving higher frequencies with a downconverter | [site](https://www.rtl-sdr.com/receive-up-to-4-5-ghz-on-your-rtl-sdr-for-5-using-a-directv-downconverter/) |
 | R-25 | NSARC, Unmanned Aircraft Systems SAR Addendum to the National SAR Supplement, v1.0 | [PDF](https://www.dco.uscg.mil/Portals/9/CG-5R/nsarc/SAR%20UAS%20Addendum%20(Version%201_0)%20-%20Final.pdf) |
+| R-26 | NASA FIRMS, Fire Information for Resource Management System (active-fire detections; URL checked 2026-11-07) | [site](https://firms.modaps.eosdis.nasa.gov/) |
+| R-27 | NIFC, National Interagency Fire Center, fire maps and open data (perimeters; URL checked 2026-11-07) | [site](https://www.nifc.gov/fire-information/maps) |
 
 References were last accessed on 2026-11-07. Links to the doctrine and slide: [AFH 10-644](../reference/afh10-644.pdf), [profile slide (4K)](../profiles/profile-comparison-4k.png).
 
