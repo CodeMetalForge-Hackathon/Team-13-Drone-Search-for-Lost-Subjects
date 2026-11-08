@@ -10,6 +10,12 @@ from typing import Optional
 SPEED_OF_LIGHT = 299_792_458.0
 
 
+# Alternative layout with ~3x the aperture (SMA extension cables, all in one line, d = lambda/2):
+#     TX1 ----2d---- TX2 --d-- RX1 --d-- RX2      TX spacing = 2 x RX spacing -> filled virtual array
+#     use: --antennas "TX1=-21.42,TX2=-9.18,RX1=-3.06,RX2=3.06"
+WIDE_LAYOUT = {"rx_pos": ((-0.0306, 0.0), (0.0306, 0.0)), "tx_pos": ((-0.2142, 0.0), (-0.0918, 0.0))}
+
+
 @dataclass
 class Config:
     # --- radio (bladeRF 2.0, 2x2 MIMO) ------------------------------------
@@ -31,11 +37,12 @@ class Config:
     tones_tx2: tuple = (-2.90e6, -0.90e6, 1.10e6, 3.10e6)
     tone_grid: float = 50e3
     # antenna positions (x, y) in metres, array along x, looking towards +y (any layout works; the
-    # steering model is exact). Default, all in one line, d = lambda/2 = 6.12 cm:
-    #     TX1 ---2d--- TX2 --d-- RX1 --d-- RX2        (x = -3.5d, -1.5d, -0.5d, +0.5d)
-    # TX spacing = 2 x RX spacing gives a filled 4-element virtual array (no grating lobes).
-    rx_pos: tuple = ((-0.0306, 0.0), (0.0306, 0.0))
-    tx_pos: tuple = ((-0.2142, 0.0), (-0.0918, 0.0))
+    # steering model is exact). Default: antennas screwed straight onto the bladeRF 2.0 SMA ports,
+    # one line at a uniform 1.5 cm pitch, seen from behind the board looking into the room:
+    #     TX2 --1.5-- RX2 --1.5-- RX1 --1.5-- TX1          (x = -2.25, -0.75, +0.75, +2.25 cm)
+    # A wider line (WIDE_LAYOUT, lambda/2 = 6.12 cm steps via SMA extension cables) maps better.
+    rx_pos: tuple = ((0.0075, 0.0), (-0.0075, 0.0))      # RX1, RX2
+    tx_pos: tuple = ((0.0225, 0.0), (-0.0225, 0.0))      # TX1, TX2
 
     # --- slow-time processing ---------------------------------------------
     slow_fs: int = 200                   # Doppler/slow-time sample rate after tone demod (Hz)
@@ -97,9 +104,13 @@ class Config:
     map_max_bins: int = 32               # strongest bins used per map update
     map_peak_rel: float = 0.3            # secondary peaks must reach this fraction of the strongest
     map_min_sep_m: float = 0.6
+    map_min_range_m: float = 0.7         # no people reported closer than this to the antennas
     map_same_bearing_deg: float = 10.0   # weaker peak this close in bearing ...
     map_same_bearing_m: float = 2.0      # ... and range = range sidelobe of the stronger one
-    map_subspace_min: float = 0.8        # still people: steering vector share inside the signal subspace
+    map_subspace_min: float = 0.8
+    map_null_energy: float = 0.999       # still search: null the movers' paths to this energy share,
+    map_null_keep: float = 0.2           # ... shrinking the null until this share of the map stays visible
+    map_null_min_rank: int = 2           # ... but never below this many directions        # still people: steering vector share inside the signal subspace
     max_targets: int = 4
     leak_tau_s: float = 30.0             # leakage-phase reference (per channel) time constant; long, so
                                          # people's echoes barely move it

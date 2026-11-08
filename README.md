@@ -56,26 +56,38 @@ At startup the program prints each RX peak (dBFS) and how far the tones sit abov
 
 ## Antennas
 
-The default layout (`config.py`) puts all four antennas in one line, d = λ/2 = 6.12 cm:
+The default layout (`config.py`) has the four antennas screwed directly onto the bladeRF's SMA ports. They sit in one line at a uniform 1.5 cm pitch, seen from **behind the board, looking into the room**:
 
 ```
-TX1 ----2d---- TX2 --d-- RX1 --d-- RX2          (x = -3.5d, -1.5d, -0.5d, +0.5d)
+TX2 --1.5-- RX2 --1.5-- RX1 --1.5-- TX1        (x = -2.25, -0.75, +0.75, +2.25 cm)
 ```
 
-With TX spacing twice the RX spacing, the virtual array is filled: 4 elements, λ/2, no grating lobes.
+If people show up mirrored left/right on the map, you're looking at the board from the other side. Turn it around, or swap the signs with `--antennas`.
 
-**Antennas screwed directly onto the bladeRF's SMA ports** are allowed. Measure the centre-to-centre positions and pass them once:
+This compact layout is a 4.5 cm aperture, and in simulation it gives:
+- one walker, or a person straight ahead: about 0.2 m median error
+- two still people at different angles: both found, each with their own breathing rate
+- a sitter beside a walker: visible 50–95% of the time. With so little aperture, the walker's leftovers in the breathing band can't be nulled without also hiding the sitter.
+- two walkers: correct count 75–90% of the time
+- empty room: no false people (nothing is reported closer than 0.7 m, where the leakage sits)
+
+Two effects the simulator leaves out will matter at 1.5 cm spacing:
+- **Strong TX→RX leakage.** Watch the clipping warning and lower `--tx-gain` if it appears.
+- **Mutual coupling** between antennas, so run `calibrate --array 2` once.
+
+**A wider line maps clearly better** (about 3× the aperture; with two walkers, or a walker and a sitter, 80–100% correct in simulation). Use SMA extension cables, everything in one line, d = λ/2 = 6.12 cm:
+
+```
+TX1 ----2d---- TX2 --d-- RX1 --d-- RX2     --antennas "TX1=-21.42,TX2=-9.18,RX1=-3.06,RX2=3.06"
+```
+
+For any other layout, pass the positions once (cm along the line, `x:y` for an offset towards the room):
 
 ```bash
-.venv/bin/python main.py calibrate --array 2 --antennas "TX1=-3,RX1=-1,RX2=1,TX2=3"   # cm along the board edge
+.venv/bin/python main.py calibrate --array 2 --antennas "TX2=-2.25,RX2=-0.75,RX1=0.75,TX1=2.25"
 ```
 
-`calibrate --array` stores the layout in `calib.json`, and every later `run --map` uses it. With ports only 1–2 cm apart:
-- **Angle resolution is about 3× worse** than the λ/2 layout, because the aperture is smaller.
-- **TX→RX leakage is much stronger.** Watch the clipping warning and lower `--tx-gain`.
-- **Mutual coupling distorts the array**, so `calibrate --array` matters.
-
-Short SMA extension cables, or the λ/2 layout above, give clearly better maps. In simulation, which leaves out coupling, the port layout still localised one walker to about 0.2 m. But with a walker and a sitter, accuracy fell from 0.2 m to 0.3–0.9 m depending on port order.
+`calibrate --array` stores the layout in `calib.json`, and every later `run --map` uses it.
 
 Other placement notes:
 - **Mount the array on a wall or the edge of a table, facing the room.** A line of omni antennas can't tell front from back, so the map only shows y > 0. People behind the array appear mirrored in front.
@@ -85,8 +97,8 @@ Other placement notes:
 
 ## What to expect (and limits)
 
-- **Range precision vs. resolution.** One isolated person is placed to about 0.2–0.4 m in simulation. But a 6 MHz span only *resolves* about 25 m, so two people are separated by Doppler, breathing rate, or angle (about 30° with the default array), not by range.
-- **Two people walking** get the right count most of the time (85–100% of updates in simulation). When they share the same velocities for a while, their bins mix and one may drop out briefly. Bins that fit no single position are discarded rather than turned into ghosts.
+- **Range precision vs. resolution.** One isolated person is placed to about 0.2–0.4 m in simulation. But a 6 MHz span only *resolves* about 25 m, so two people are separated by Doppler, breathing rate, or angle, not by range. Angle resolution is about 30° with the wide line and much coarser with the SMA-port layout.
+- **Two people walking** get the right count most of the time (wide line 80–100%, SMA ports 75–90% of updates in simulation). When they share the same velocities for a while, their bins mix and one may drop out briefly. Bins that fit no single position are discarded rather than turned into ghosts.
 - **Still people** need about 6–10 s to appear and about 15 s for a breathing rate. A weak still person (far away, behind a strong walker) may come and go.
 - **At most 4 people** are tracked (`max_targets`), and in practice about 3 work well.
 - All numbers above come from the simulator (`presence/sim.py`). Real rooms add multipath and coupling, so record a session (`--record`) and replay it to tune.

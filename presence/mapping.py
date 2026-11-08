@@ -165,6 +165,10 @@ def find_peaks(m: np.ndarray, grid: SteeringGrid, cfg: Config, kind: str,
         # range is the weak dimension: a weaker maximum on (almost) the same bearing and not far
         # away in range is the stronger one's range sidelobe, not a second person
         az, r = np.arctan2(d.x, d.y), np.hypot(d.x, d.y)
+        # the leakage (and any LO drift on it) looks like a reflector at zero range: nothing this
+        # close to the antennas is reported as a person
+        if r < cfg.map_min_range_m:
+            continue
         if any(abs(np.degrees(az - np.arctan2(o.x, o.y))) < cfg.map_same_bearing_deg
                and abs(r - np.hypot(o.x, o.y)) < cfg.map_same_bearing_m for o in out):
             continue
@@ -510,7 +514,18 @@ class MapPipeline:
         if len(movers):
             B = self.W @ self.grid.steer(*np.array(movers).T).T
             U, sv, _ = np.linalg.svd(B, full_matrices=False)
-            Q = U[:, sv > 1e-2 * sv[0]][:, :self.C // 2]
+            # null the directions holding the movers' steering energy, but never so many that most
+            # of the map goes blind: with a small antenna aperture neighbouring positions look
+            # alike, and a full null would hide every still person too
+            e = np.cumsum(sv ** 2) / np.sum(sv ** 2)
+            rank = min(int(np.searchsorted(e, c.map_null_energy) + 1), self.C // 2, len(sv))
+            floor = min(c.map_null_min_rank, len(sv))
+            while True:
+                Q = U[:, :rank]
+                kept = 1 - np.sum(np.abs(self.grid.AHw @ Q.astype(np.complex64)) ** 2, axis=1)
+                if rank <= floor or np.mean(kept > 0.5) >= c.map_null_keep:
+                    break
+                rank -= 1
             Pn = Pn - Q @ Q.conj().T
             Z = Pn @ Z
         R = Z @ Z.conj().T / Z.shape[-1]

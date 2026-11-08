@@ -2,19 +2,21 @@
 import numpy as np
 import pytest
 
-from presence.config import Config, Thresholds
+from presence.config import WIDE_LAYOUT, Config, Thresholds
 from presence.detector import Ring
 from presence.dsp import ClutterFilter, MultiToneDemodulator, PhaseJumpCorrector
 from presence.mapping import MOVING_T, STILL_T, MapPipeline, calibrate_array
 from presence.radio import ArraySource, load_recording, multitone_tx_buffer, save_recording
 from presence.sim import _interp_path, person, simulate_scene
 
-CFG = Config()
+BOARD = Config()                                     # default: antennas on the bladeRF SMA ports
+CFG = Config(**WIDE_LAYOUT)                          # algorithm tests: wide lambda/2 line
 
 
-def run_map(people, seconds, th=None, seed=1, **kw):
-    x = simulate_scene(people, CFG, seconds, seed=seed, **kw)
-    return MapPipeline(CFG, th or Thresholds()).feed(x)
+def run_map(people, seconds, th=None, seed=1, cfg=None, **kw):
+    cfg = cfg or CFG
+    x = simulate_scene(people, cfg, seconds, seed=seed, **kw)
+    return MapPipeline(cfg, th or Thresholds()).feed(x)
 
 
 def errors(statuses, people, t_min=6.0):
@@ -33,6 +35,13 @@ WALKER = person([(0, -2, 2), (8, -1.5, 5), (16, -2, 2), (24, -1.5, 5), (32, -2, 
 
 
 # --- radio / demodulation ------------------------------------------------------
+def test_default_layout_is_board_sma_ports():
+    BOARD.validate()
+    # TX2, RX2, RX1, TX1 in one line, uniform 1.5 cm pitch
+    xs = [BOARD.tx_pos[1][0], BOARD.rx_pos[1][0], BOARD.rx_pos[0][0], BOARD.tx_pos[0][0]]
+    assert np.allclose(np.diff(xs), 0.015) and np.isclose(sum(xs), 0)
+
+
 def test_config_defaults_valid_and_virtual_array():
     CFG.validate()
     assert CFG.n_channels == 16 and len(CFG.channels()) == 16
@@ -226,7 +235,8 @@ def test_cli_map_sim_headless(capsys):
     import main
     main.main(["run", "--map", "--sim", "--fast", "--headless", "--print-every", "10", "--calib", "/nonexistent"])
     out = capsys.readouterr().out
-    assert "people=3" in out and "moving" in out and "still" in out and "bpm" in out
+    assert "TX2 -2.2 cm, RX2 -0.8 cm, RX1 +0.8 cm, TX1 +2.2 cm" in out
+    assert "people=2" in out and "moving" in out and "still" in out and "bpm" in out
 
 
 def test_cli_calibrate_array_sim(tmp_path, capsys):
@@ -259,3 +269,28 @@ def test_cli_antenna_layout_saved_with_array_calibration(tmp_path, capsys):
     main.main(["run", "--map", "--sim", "--fast", "--headless", "--print-every", "60", "--calib", str(calib)])
     out = capsys.readouterr().out
     assert "TX1 -4.5 cm, RX1 -1.5 cm, RX2 +1.5 cm, TX2 +4.5 cm" in out and "array calibration: from" in out
+
+
+# --- the actual board layout (antennas on the SMA ports, 4.5 cm aperture) ------------------
+def test_board_layout_single_walker_and_straight_ahead():
+    for p in (WALKER, person([(0, 0, 1.5), (8, 0, 5), (16, 0, 1.5), (24, 0, 5)])):
+        err, count = errors(run_map([p], 24, cfg=BOARD, seed=10), [p])
+        assert np.median(err) < 0.4 and np.mean(count == 1) > 0.9
+
+
+def test_board_layout_empty_room_and_two_sitters():
+    assert all(len(s.tracks) == 0 for s in run_map([], 40, cfg=BOARD, seed=11))
+    a = person([(0, -1.8, 2.5), (60, -1.8, 2.5)], bpm=12)
+    b = person([(0, 1.8, 3.0), (60, 1.8, 3.0)], bpm=17)
+    tracks = run_map([a, b], 50, cfg=BOARD, seed=12)[-1].tracks
+    assert len(tracks) == 2
+    assert sorted(round(tr.bpm) for tr in tracks) == [12, 17]
+
+
+def test_board_layout_walker_and_sitter():
+    # small aperture: the sitter is masked part of the time while the walker passes nearby
+    sitter = person([(0, 1.5, 3.0), (60, 1.5, 3.0)], bpm=14)
+    walk = person([(0, -2, 2), (8, -2, 5), (16, -2, 2), (24, -2, 5), (32, -2, 2), (40, -2, 5), (48, -2, 2)])
+    st = run_map([walk, sitter], 48, cfg=BOARD, seed=11)
+    err, count = errors(st, [walk, sitter], t_min=15)
+    assert np.median(err) < 0.5 and np.mean(count == 2) > 0.5 and np.mean(count > 2) < 0.1
