@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Pluto SDR 2.4 GHz CW Doppler human presence detector.
+"""bladeRF 2.0 2.4 GHz multi-tone CW MIMO radar: presence, breathing, heart rate, 2D people map.
 
-    python main.py run                     live radar + plots
-    python main.py run --headless          live radar, status lines only
-    python main.py run --sim               simulated scene (no hardware)
-    python main.py calibrate               empty-room calibration -> calib.json
-    python main.py record out.npz -s 120   save slow-time IQ for offline tuning
-    python main.py replay out.npz          replay a recording through the detector
+    python main.py run --map               live 2D map of people (direction + range) + plots
+    python main.py run --map --headless    live map, track lines only
+    python main.py run --map --sim         simulated multi-person scene (no hardware)
+    python main.py run                     single-channel presence / breathing view
+    python main.py run --heart             heart-rate view
+    python main.py calibrate --array 2     optional: refine the antenna array (person at 2 m, 0 deg)
+    python main.py record out.npz -s 120   save multichannel slow-time IQ for offline tuning
+    python main.py replay out.npz --map    replay a recording through the map
 """
 from __future__ import annotations
 
@@ -19,20 +21,27 @@ from pathlib import Path
 
 import numpy as np
 
-from presence.config import Config, Thresholds
+from presence.config import Config, Thresholds, parse_antennas
 from presence.detector import Pipeline, boundary_level, format_status
-from presence.radio import ArraySource, PlutoSource, load_recording, save_recording
-from presence.sim import DEFAULT_SCENARIO, simulate_mix, simulate_slow_time
+from presence.mapping import MapPipeline, calibrate_array, format_map_status
+from presence.radio import ArraySource, BladeRFSource, load_recording, save_recording
+from presence.sim import (DEFAULT_SCENARIO, demo_people, person, sim_cal_err, simulate_mix, simulate_scene,
+                          simulate_slow_time)
 
 
 def build_config(a) -> Config:
     cfg = Config()
-    cfg.uri = a.uri
+    cfg.device = a.device
     cfg.center_freq = a.freq
     cfg.rx_gain_db = a.rx_gain
-    cfg.tx_atten_db = a.tx_atten
+    cfg.tx_gain_db = a.tx_gain
     if a.breath_win:
         cfg.breath_win_s = a.breath_win
+    if getattr(a, "antennas", None):
+        try:
+            cfg.tx_pos, cfg.rx_pos = parse_antennas(a.antennas)
+        except ValueError as e:
+            sys.exit(str(e))
     cfg.auto_floor = not getattr(a, "no_auto_floor", False)
     cfg.heart = bool(getattr(a, "heart", False))
     if cfg.heart:
@@ -41,16 +50,39 @@ def build_config(a) -> Config:
     return cfg
 
 
-def build_source(a, cfg: Config, scenario=DEFAULT_SCENARIO):
+def apply_saved_layout(a, cfg: Config, th: Thresholds) -> None:
+    """Without --antennas, use the antenna layout stored by `calibrate --array` (if any)."""
+    if not getattr(a, "antennas", None) and th.antennas is not None:
+        cfg.tx_pos = tuple(map(tuple, th.antennas[:2]))
+        cfg.rx_pos = tuple(map(tuple, th.antennas[2:]))
+    elif th.antennas is not None and [list(p) for p in cfg.tx_pos + cfg.rx_pos] != th.antennas:
+        print("WARNING: --antennas differs from the layout the array calibration was made with; "
+              "ignoring that calibration (re-run calibrate --array)")
+        th.array_cal = None
+    cfg.validate()
+
+
+def describe_layout(cfg: Config) -> str:
+    names = ["TX1", "TX2", "RX1", "RX2"]
+    pos = list(cfg.tx_pos) + list(cfg.rx_pos)
+    return ", ".join(f"{n} {p[0] * 100:+.1f} cm" + (f" (y {p[1] * 100:+.1f})" if p[1] else "")
+                     for n, p in sorted(zip(names, pos), key=lambda q: q[1][0]))
+
+
+def build_source(a, cfg: Config, scenario=DEFAULT_SCENARIO, people=None, seconds: float = 120.0):
+    """Recording, simulation (1D legacy `scenario`, or multichannel `people`), or the bladeRF."""
     if getattr(a, "file", None):
-        iq, fs = load_recording(a.file)
+        iq, fs = load_recording(a.file, cfg)
         if int(fs) != cfg.slow_fs:
             sys.exit(f"recording is at {fs} Hz, expected {cfg.slow_fs} Hz")
         return ArraySource(iq, fs, realtime=not a.fast)
     if a.sim:
-        iq = simulate_slow_time(scenario, fs=cfg.slow_fs, fc=cfg.center_freq, seed=a.seed)
+        if people is not None:
+            iq = simulate_scene(people, cfg, seconds, seed=a.seed)
+        else:
+            iq = simulate_slow_time(scenario, fs=cfg.slow_fs, fc=cfg.center_freq, seed=a.seed)
         return ArraySource(iq, cfg.slow_fs, realtime=not a.fast, loop=not a.fast)
-    return PlutoSource(cfg)
+    return BladeRFSource(cfg)
 
 
 class Recorder:
@@ -58,14 +90,15 @@ class Recorder:
         self.path, self.chunks = path, []
 
     def add(self, x):
-        if self.path is not None and len(x):
+        if self.path is not None and x.shape[-1]:
             self.chunks.append(x.astype(np.complex64))
 
     def save(self, cfg: Config):
         if self.path and self.chunks:
-            iq = np.concatenate(self.chunks)
+            iq = np.concatenate(self.chunks, axis=-1)
             save_recording(self.path, iq, cfg.slow_fs, cfg)
-            print(f"saved {len(iq) / cfg.slow_fs:.1f} s to {self.path}")
+            ch = f", {iq.shape[0]} channels" if iq.ndim == 2 else ""
+            print(f"saved {iq.shape[-1] / cfg.slow_fs:.1f} s{ch} to {self.path}")
 
 
 def cmd_run(a):
@@ -79,11 +112,22 @@ def cmd_run(a):
         print(f"range boundary: motion weaker than {th.motion_abs_db:.1f} dBFS is ignored"
               + (f" (~{th.boundary_m:g} m)" if th.boundary_m else ""))
         if th.gain_mismatch(cfg):
-            print(f"WARNING: boundary was measured at rx-gain {th.rx_gain_db:g} / tx-atten {th.tx_atten_db:g}; "
-                  f"now {cfg.rx_gain_db:g} / {cfg.tx_atten_db:g}. Shifting it by the gain difference.")
-            th.motion_abs_db += (cfg.rx_gain_db - th.rx_gain_db) + (cfg.tx_atten_db - th.tx_atten_db)
-    src = build_source(a, cfg)
-    pipe = Pipeline(cfg, th)
+            print(f"WARNING: boundary was measured at rx-gain {th.rx_gain_db:g} / tx-gain {th.tx_gain_db:g}; "
+                  f"now {cfg.rx_gain_db:g} / {cfg.tx_gain_db:g}. Shifting it by the gain difference.")
+            th.motion_abs_db += (cfg.rx_gain_db - th.rx_gain_db) + (cfg.tx_gain_db - th.tx_gain_db)
+    use_map = bool(getattr(a, "map", False))
+    if use_map:
+        apply_saved_layout(a, cfg, th)
+        print("antennas: " + describe_layout(cfg))
+        print("array calibration: " + ("from " + a.calib if th.array_cal else
+                                       "none (geometry + leakage reference only; optional: calibrate --array)"))
+        src = build_source(a, cfg, people=demo_people(), seconds=120.0)
+        if isinstance(src, ArraySource) and src.data.ndim != 2:
+            sys.exit("--map needs a multichannel recording (made with this bladeRF version)")
+        pipe = MapPipeline(cfg, th)
+    else:
+        src = build_source(a, cfg)
+        pipe = Pipeline(cfg, th)
     rec = Recorder(a.record)
     src.start()
     last_print = [-1e9]
@@ -91,7 +135,7 @@ def cmd_run(a):
     def on_status(s):
         if s.t - last_print[0] >= a.print_every:
             last_print[0] = s.t
-            print(format_status(s), flush=True)
+            print(format_map_status(s) if use_map else format_status(s), flush=True)
 
     try:
         if a.headless:
@@ -107,7 +151,7 @@ def cmd_run(a):
             import signal
 
             from presence import viz
-            from presence.viz import HeartView, LiveView
+            from presence.viz import HeartView, LiveView, MapView
             # Tk swallows KeyboardInterrupt inside callbacks; route SIGINT/SIGTERM through a flag
             # so the window closes and the recording is saved.
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -119,8 +163,12 @@ def cmd_run(a):
                 rec.add(x)
                 return x
             src.read = read_and_record
-            view = (HeartView(src, pipe, on_status=on_status, ref_bpm=a.ref_bpm) if cfg.heart
-                    else LiveView(src, pipe, on_status=on_status))
+            if use_map:
+                view = MapView(src, pipe, on_status=on_status)
+            elif cfg.heart:
+                view = HeartView(src, pipe, on_status=on_status, ref_bpm=a.ref_bpm)
+            else:
+                view = LiveView(src, pipe, on_status=on_status)
             view.show()
             if getattr(view.anim, "event_source", None) is not None:
                 view.anim.event_source.stop()   # window closed: no more timer callbacks
@@ -142,7 +190,7 @@ def cmd_record(a):
         while n < a.seconds * cfg.slow_fs and not src.finished:
             x = src.read()
             rec.add(x)
-            prev, n = n, n + len(x)
+            prev, n = n, n + x.shape[-1]
             if n // cfg.slow_fs != prev // cfg.slow_fs:   # once per second
                 print(f"\rrecording {n / cfg.slow_fs:5.0f} / {a.seconds:.0f} s", end="", flush=True)
     except KeyboardInterrupt:
@@ -181,6 +229,8 @@ def _countdown(sec):
 def cmd_calibrate(a):
     cfg = build_config(a)
     th = Thresholds.load(a.calib)          # merge into an existing file
+    if a.array is not None:
+        return calibrate_array_cmd(a, cfg, th)
     if a.proximity is not None:
         a.sim_scale = a.sim_scale or 1.0
         return calibrate_proximity(a, cfg, th)
@@ -285,7 +335,7 @@ def calibrate_proximity(a, cfg, th):
     th.motion_abs_db = (pct(move_mot, 25) + hi_away) / 2 if hi_away > -200 and m_gap > 0 else (
         pct(move_mot, 25) - 3.0 if hi_away <= -200 else hi_away + 1.0)
     th.boundary_m = d
-    th.rx_gain_db, th.tx_atten_db = cfg.rx_gain_db, cfg.tx_atten_db
+    th.rx_gain_db, th.tx_gain_db = cfg.rx_gain_db, cfg.tx_gain_db
 
     print("\nnear (still-energy) level, dBFS     p10     med     p95")
     print(f"  away (others around)          {pct(away_near, 10):7.1f} {np.median(away_near):7.1f} {pct(away_near, 95):7.1f}")
@@ -318,7 +368,7 @@ def calibrate_boundary(a, cfg, th):
                  "or raise --tx-atten / --rx-gain")
     th.motion_abs_db = lvl - a.margin_boundary
     th.boundary_m = a.boundary
-    th.rx_gain_db, th.tx_atten_db = cfg.rx_gain_db, cfg.tx_atten_db
+    th.rx_gain_db, th.tx_gain_db = cfg.rx_gain_db, cfg.tx_gain_db
     seen = np.array([s.motion_abs for s in stats if s.motion_db > s.motion_thr])
     print(f"motion level at {a.boundary:g} m: median {lvl:.1f} dBFS (p10 {np.percentile(seen, 10):.1f}, "
           f"p90 {np.percentile(seen, 90):.1f}), {len(seen)}/{len(stats)} updates with motion")
@@ -328,16 +378,67 @@ def calibrate_boundary(a, cfg, th):
     print(f"saved {a.calib}")
 
 
+def calibrate_array_cmd(a, cfg, th):
+    """Person stands still (breathing, gently swaying) straight in front of the array at D m."""
+    d = a.array
+    seconds = a.seconds or 30.0
+    if a.sim:
+        # unknown per-channel antenna phase errors (sim_cal_err in sim.py), same seed as `run --sim`
+        iq = simulate_scene([person([(0, 0.0, d), (seconds + 10, 0.0, d)], bpm=15)], cfg, seconds + 10,
+                            seed=a.seed, cal_err=sim_cal_err(cfg, a.seed))
+        src = ArraySource(iq, cfg.slow_fs, realtime=not a.fast)
+    else:
+        src = build_source(a, cfg)
+    apply_saved_layout(a, cfg, Thresholds(antennas=th.antennas))
+    print("antennas: " + describe_layout(cfg))
+    pipe = MapPipeline(cfg, Thresholds(), use_cal=False)
+    rec = Recorder(None)
+    print(f"Array calibration: stand STILL straight in front of the antennas (0 deg) at {d:g} m, breathe "
+          f"normally, sway very slightly. Everyone else out of the area / still. {seconds:.0f} s.")
+    _countdown(a.delay)
+    src.start()
+    last = -1
+    try:
+        while pipe.t < seconds + 5 and not src.finished:
+            x = src.read()
+            if isinstance(src, ArraySource) and x.ndim != 2:
+                sys.exit("array calibration needs multichannel data")
+            rec.add(x)
+            pipe.feed(x)
+            if int(pipe.t) != last:
+                last = int(pipe.t)
+                print(f"\r    measuring: {max(0.0, seconds + 5 - pipe.t):4.0f} s left ", end="", flush=True)
+    finally:
+        print()
+        src.stop()
+        rec.save(cfg)
+    if pipe.t < seconds:
+        sys.exit("calibration interrupted - not enough data")
+    raw = pipe.raw.last(int(seconds * cfg.slow_fs))
+    cal, quality = calibrate_array(raw, cfg, 0.0, d, W=pipe.W)
+    print(f"dominant source holds {quality * 100:.0f}% of the micro-motion power"
+          + ("" if quality > 0.5 else "  (LOW - someone else moving? stand closer / stiller and retry)"))
+    if quality < 0.3:
+        sys.exit("calibration rejected")
+    th.array_cal = [[float(z.real), float(z.imag)] for z in cal]
+    th.antennas = [list(p) for p in cfg.tx_pos + cfg.rx_pos]
+    th.save(a.calib)
+    print(f"saved array calibration ({len(cal)} channels) to {a.calib}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--uri", default="ip:192.168.2.1", help="Pluto URI (ip:192.168.2.1 or usb:x.y.z)")
+    common.add_argument("--device", default="", help='bladeRF device string (default: first found, e.g. "*:serial=ab12")')
     common.add_argument("--freq", type=float, default=2.45e9, help="LO frequency in Hz (default 2.45e9)")
-    common.add_argument("--rx-gain", type=float, default=50.0, help="manual RX gain dB (0..73)")
-    common.add_argument("--tx-atten", type=float, default=-10.0, help="TX gain dB (0 = max, -89 = min)")
+    common.add_argument("--antennas", metavar="LAYOUT",
+                        help='antenna positions along the array axis in cm, e.g. "TX1=-4.5,TX2=-1.5,RX1=1.5,RX2=4.5" '
+                             '(saved by calibrate --array; default: lambda/2 layout from config.py)')
+    common.add_argument("--rx-gain", type=float, default=40.0, help="manual RX gain dB (both receivers)")
+    common.add_argument("--tx-gain", type=float, default=30.0, help="TX gain dB (both transmitters, higher = more power)")
     common.add_argument("--breath-win", type=float, default=None, help="breathing window seconds (default 30)")
     common.add_argument("--calib", default="calib.json", help="threshold file")
-    common.add_argument("--sim", action="store_true", help="use simulated scene instead of the Pluto")
+    common.add_argument("--sim", action="store_true", help="use a simulated scene instead of the bladeRF")
     common.add_argument("--fast", action="store_true", help="sim/replay: run faster than real time")
     common.add_argument("--seed", type=int, default=0)
     common.add_argument("--no-auto-floor", action="store_true",
@@ -348,6 +449,7 @@ def main(argv=None):
     r.add_argument("--headless", action="store_true", help="no plots, print status lines")
     r.add_argument("--record", metavar="FILE.npz", help="also save slow-time IQ")
     r.add_argument("--print-every", type=float, default=1.0)
+    r.add_argument("--map", action="store_true", help="2D map of people (direction finding + range)")
     r.add_argument("--heart", action="store_true", help="heart-rate mode (subject still, <=0.5 m)")
     r.add_argument("--ref-bpm", type=float, help="heart mode: reference pulse (watch / oximeter) to compare")
     r.add_argument("--backend", help="matplotlib backend override")
@@ -357,6 +459,7 @@ def main(argv=None):
     rp.add_argument("file")
     rp.add_argument("--headless", action="store_true")
     rp.add_argument("--print-every", type=float, default=1.0)
+    rp.add_argument("--map", action="store_true", help="2D map of people (multichannel recordings)")
     rp.add_argument("--heart", action="store_true", help="heart-rate mode (subject still, <=0.5 m)")
     rp.add_argument("--ref-bpm", type=float, help="heart mode: reference pulse (watch / oximeter) to compare")
     rp.add_argument("--backend")
@@ -368,6 +471,8 @@ def main(argv=None):
     c.add_argument("--proximity", type=float, metavar="METERS",
                    help="guided proximity calibration for a presence zone of this radius (recommended for demos)")
     c.add_argument("--session", default="calib_session.npz", help="proximity mode: save the session IQ here")
+    c.add_argument("--array", type=float, metavar="METERS",
+                   help="array calibration: one person stands still straight in front at this distance")
     c.add_argument("--boundary", type=float, metavar="METERS",
                    help="boundary mode: you move at this distance; weaker motion is ignored afterwards")
     c.add_argument("--margin-boundary", type=float, default=0.0,
@@ -389,7 +494,7 @@ def main(argv=None):
 if __name__ == "__main__":
     faulthandler.enable()
     main()
-    # Everything is saved and the radio released. Skip native (libiio / Tk) destructors at
+    # Everything is saved and the radio released. Skip native (libbladeRF / Tk) destructors at
     # interpreter teardown, which can segfault after closing the plot window.
     sys.stdout.flush()
     sys.stderr.flush()

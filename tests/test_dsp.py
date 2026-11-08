@@ -16,7 +16,7 @@ def run(segments, **kw):
 
 # --- fast-time demodulation ------------------------------------------------
 def test_demod_phase_continuous_across_uneven_buffers():
-    fs, f_tone, dec = CFG.sample_rate, CFG.tone_freq, CFG.dec
+    fs, f_tone, dec = 1_000_000, 50e3, 5000      # legacy single-tone demodulator (kept as reference)
     n = fs * 2
     t = np.arange(n) / fs
     phi = 0.4 * np.sin(2 * np.pi * 0.3 * t) + 2 * np.pi * 7.0 * t     # breathing + 7 Hz Doppler

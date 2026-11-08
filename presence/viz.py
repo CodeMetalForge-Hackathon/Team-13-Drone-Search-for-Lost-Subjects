@@ -25,7 +25,7 @@ class LiveView:
         self.last: Status | None = None
 
         self.fig = plt.figure(figsize=(12, 8))
-        self.fig.canvas.manager.set_window_title("Pluto presence radar")
+        self.fig.canvas.manager.set_window_title("bladeRF presence radar")
         gs = self.fig.add_gridspec(3, 2, height_ratios=[0.5, 2.2, 1.6], hspace=0.45, wspace=0.25)
 
         self.ax_state = self.fig.add_subplot(gs[0, :])
@@ -211,7 +211,7 @@ class HeartView:
         cfg = pipe.cfg
 
         self.fig = plt.figure(figsize=(13, 9), facecolor="white")
-        self.fig.canvas.manager.set_window_title("Pluto heart-rate radar")
+        self.fig.canvas.manager.set_window_title("bladeRF heart-rate radar")
         outer = self.fig.add_gridspec(2, 1, height_ratios=[0.8, 4.4], hspace=0.12,
                                       left=0.06, right=0.97, top=0.98, bottom=0.06)
         cards = outer[0].subgridspec(1, 3, wspace=0.05)
@@ -379,6 +379,168 @@ class HeartView:
                            for r in self.trend])
             self.raw_pts.set_data(tr[:, 0], tr[:, 2])
             self.lock_line.set_data(tr[:, 0], tr[:, 1])
+
+    def show(self):
+        plt.show()
+
+
+TRACK_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#ca8a04", "#db2777"]
+
+
+class MapView:
+    """Top-down 2D map of people (run --map): heatmap, tracks with IDs, trails and breathing."""
+
+    def __init__(self, source: Source, pipe, on_status=None, interval_ms: int = 200):
+        from .mapping import MOVING_T
+        self._moving = MOVING_T
+        self.src, self.pipe, self.on_status = source, pipe, on_status
+        self.last = None
+        cfg = pipe.cfg
+        g = pipe.grid
+        n_art = max(cfg.max_targets * 2, 8)
+
+        self.fig = plt.figure(figsize=(14, 8.5), facecolor="white")
+        self.fig.canvas.manager.set_window_title("bladeRF 2D people radar")
+        outer = self.fig.add_gridspec(1, 2, width_ratios=[1.45, 1], wspace=0.12,
+                                      left=0.05, right=0.98, top=0.95, bottom=0.07)
+        right = outer[1].subgridspec(3, 1, height_ratios=[0.75, 1.5, 1.6], hspace=0.45)
+        cards = right[0].subgridspec(1, 2, wspace=0.05)
+        self.c_people = _Card(self.fig, cards[0], "PEOPLE")
+        self.c_status = _Card(self.fig, cards[1], "NEAREST / STATUS")
+
+        # --- map ---
+        ax = self.ax_map = self.fig.add_subplot(outer[0])
+        ext = [g.xs[0] - cfg.map_res / 2, g.xs[-1] + cfg.map_res / 2,
+               g.ys[0] - cfg.map_res / 2, g.ys[-1] + cfg.map_res / 2]
+        self.im = ax.imshow(np.zeros(g.shape), origin="lower", extent=ext, cmap="Greys", vmin=0, vmax=1,
+                            interpolation="bilinear", alpha=0.85)
+        th = np.linspace(0, np.pi, 181)
+        for r in range(1, int(np.hypot(max(map(abs, cfg.map_x)), cfg.map_y[1])) + 1):
+            ax.plot(r * np.cos(th), r * np.sin(th), color="#9ca3af", lw=0.6, ls=":")
+            if r < cfg.map_y[1]:
+                ax.text(0.05, r + 0.05, f"{r} m", fontsize=7, color="#6b7280")
+        for az in (-60, -30, 0, 30, 60):
+            a = np.radians(az)
+            R = 20
+            ax.plot([0, R * np.sin(a)], [0, R * np.cos(a)], color="#d1d5db", lw=0.6)
+        ax.plot(*np.array(cfg.tx_pos).T, "^", color="#dc2626", ms=7, label="TX")
+        ax.plot(*np.array(cfg.rx_pos).T, "v", color="#2563eb", ms=7, label="RX")
+        ax.set_xlim(cfg.map_x[0], cfg.map_x[1])
+        ax.set_ylim(-0.25, cfg.map_y[1])
+        ax.set_aspect("equal")
+        ax.set_xlabel("x (m)  - array axis -", fontsize=8)
+        ax.set_ylabel("y (m)  - distance in front of the antennas -", fontsize=8)
+        _style(ax, "people map  (shade: radar evidence; dots: tracked people)")
+        ax.legend(loc="lower right", fontsize=7, frameon=False, ncol=2)
+        self.dots = [ax.plot([], [], "o", ms=14, mec="white", mew=2)[0] for _ in range(n_art)]
+        self.trails = [ax.plot([], [], "-", lw=2, alpha=0.5)[0] for _ in range(n_art)]
+        self.labels = [ax.text(0, 0, "", fontsize=9, fontweight="bold", va="bottom",
+                               bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
+                       for _ in range(n_art)]
+        (self.det_pts,) = ax.plot([], [], "x", color="#f59e0b", ms=6, mew=1.5)
+
+        # --- spectrogram (reference channel) ---
+        self.ax_dop = self.fig.add_subplot(right[1])
+        n_spec = int(SPEC_SECONDS * pipe.fs)
+        f, _, P = doppler_spectrogram(np.zeros(n_spec, complex) + 1e-6, pipe.fs)
+        self.spec = self.ax_dop.imshow(P, aspect="auto", origin="lower", cmap="magma",
+                                       extent=[-SPEC_SECONDS, 0, f[0], f[-1]], interpolation="nearest")
+        self.ax_dop.set_ylim(-60, 60)
+        self.ax_dop.grid(False)
+        _style(self.ax_dop, f"Doppler (all people, ref. channel; {cfg.wavelength / 2 * 100:.1f} cm/s per Hz)")
+
+        # --- track list ---
+        self.ax_list = self.fig.add_subplot(right[2])
+        self.ax_list.axis("off")
+        self.ax_list.set_title("tracked people", fontsize=10, loc="left", color="#374151")
+        self.list_txt = self.ax_list.text(0.0, 1.0, "", va="top", fontsize=10, family="monospace",
+                                          transform=self.ax_list.transAxes)
+        self.anim = FuncAnimation(self.fig, self._frame, interval=interval_ms, cache_frame_data=False)
+
+    def _frame(self, _):
+        if STOP.is_set():
+            plt.close(self.fig)
+            return
+        x = self.src.read(timeout=0.05)
+        for s in self.pipe.feed(x):
+            self.last = s
+            if self.on_status:
+                self.on_status(s)
+        if self.src.finished and not x.shape[-1]:
+            self.anim.event_source.stop()
+        s = self.last
+        if s is None:
+            return
+        h = s.heat
+        self.im.set_data((h / max(h.max(), 0.3)) ** 2)
+
+        tracks = sorted(s.tracks, key=lambda tr: tr.id)
+        for i in range(len(self.dots)):
+            if i < len(tracks):
+                tr = tracks[i]
+                col = TRACK_COLORS[tr.id % len(TRACK_COLORS)]
+                self.dots[i].set_data([tr.x], [tr.y])
+                self.dots[i].set_color(col)
+                self.dots[i].set_markeredgecolor("white")
+                self.dots[i].set_marker("o" if tr.kind == self._moving else "s")
+                tx = [p[0] for p in tr.trail] + [tr.x]
+                ty = [p[1] for p in tr.trail] + [tr.y]
+                self.trails[i].set_data(tx, ty)
+                self.trails[i].set_color(col)
+                if tr.kind == self._moving:
+                    lab = f"#{tr.id} moving"
+                else:
+                    lab = f"#{tr.id} still" + (f" {tr.bpm:.0f}/min" if tr.bpm is not None else "")
+                self.labels[i].set_text(lab)
+                self.labels[i].set_position((tr.x + 0.2, tr.y + 0.15))
+                self.labels[i].set_color(col)
+            else:
+                self.dots[i].set_data([], [])
+                self.trails[i].set_data([], [])
+                self.labels[i].set_text("")
+        self.det_pts.set_data([d.x for d in s.detections], [d.y for d in s.detections])
+
+        # cards
+        n = len(tracks)
+        self.c_people.set(str(n), "moving: %d   still: %d" % (
+            sum(tr.kind == self._moving for tr in tracks), sum(tr.kind != self._moving for tr in tracks)),
+            GREEN if n else GREY)
+        if tracks:
+            near = min(tracks, key=lambda tr: np.hypot(tr.x, tr.y))
+            r = np.hypot(near.x, near.y)
+            self.c_status.set(f"{r:.1f} m", f"#{near.id} at {np.degrees(np.arctan2(near.x, near.y)):+.0f} deg, "
+                              f"{near.kind}", ORANGE if near.kind == self._moving else GREEN)
+        else:
+            st = s.status.state if s.status is not None else EMPTY
+            self.c_status.set("--", "nobody tracked" + (f" (ref. channel: {st})" if st != EMPTY else ""),
+                              GREY)
+
+        # spectrogram of the reference channel
+        n_spec = int(SPEC_SECONDS * self.pipe.fs)
+        xc = self.pipe.legacy.hp.last(n_spec)
+        filled = len(xc) / n_spec
+        if len(xc) < n_spec:
+            xc = np.concatenate([np.zeros(n_spec - len(xc), complex), xc])
+        _, _, P = doppler_spectrogram(xc, self.pipe.fs)
+        valid = P[:, int(P.shape[1] * (1 - filled)):] if filled < 1 else P
+        P = np.maximum(P, valid.min()) if valid.size else P
+        lo = np.percentile(valid if valid.size else P, 30)
+        self.spec.set_data(P)
+        self.spec.set_clim(lo, max(lo + 25, P.max()))
+
+        # list
+        lines = []
+        for tr in tracks:
+            r, az = np.hypot(tr.x, tr.y), np.degrees(np.arctan2(tr.x, tr.y))
+            what = (f"moving {tr.speed:3.1f} m/s" if tr.kind == self._moving else
+                    "still  " + (f"{tr.bpm:4.1f} breaths/min" + ("" if tr.bpm_live else " (last)")
+                                 if tr.bpm is not None else "breathing: measuring"))
+            lines.append(f"#{tr.id:<3d} {r:4.1f} m {az:+4.0f} deg  {what}")
+        if not lines:
+            lines = ["nobody tracked"]
+        lines.append("")
+        lines.append(f"Doppler bins used: moving {s.n_fast_bins}, still sources {s.n_slow_bins}")
+        self.list_txt.set_text("\n".join(lines))
 
     def show(self):
         plt.show()

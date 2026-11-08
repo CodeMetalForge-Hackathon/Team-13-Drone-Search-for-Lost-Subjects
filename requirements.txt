@@ -1,7 +1,7 @@
 numpy>=1.24
 scipy>=1.10
 matplotlib>=3.7
-pyadi-iio>=0.0.17
-pylibiio==0.25   # must match the system libiio 0.x (Debian libiio0 0.26); pylibiio 1.0 needs libiio 1.x
 pillow>=10        # venv copy: Debian python3-pil lacks ImageTk needed by the TkAgg plot window
 pytest>=7
+# bladeRF Python bindings come from apt (python3-bladerf, matched to the system libbladeRF);
+# create the venv with --system-site-packages so it can import them.

@@ -1,1 +1,1 @@
-"""2.4 GHz CW Doppler human presence detection with an ADALM-Pluto."""
+"""2.4 GHz multi-tone CW MIMO radar (bladeRF 2.0): presence, breathing, heart rate, 2D people map."""

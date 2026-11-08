@@ -100,3 +100,116 @@ def simulate_mix(near_segments, far_segments, fs: float = 200.0, fc: float = 2.4
                              seed=seed + 1000)
     n = min(len(near), len(far))
     return near[:n] + far[:n]
+
+
+# ---------------------------------------------------------------------------
+# Multichannel (bladeRF MIMO multi-tone) scenes for the 2D map
+# ---------------------------------------------------------------------------
+def person(path, bpm: float = 15.0, breath_mm: float = 5.0, amp: float = 6.0, still_amp: float = 3.0):
+    """A simulated person. `path` = [(t, x, y), ...] waypoints (linear in between, held at the ends).
+    `amp` / `still_amp` = echo amplitude at 3 m while walking / standing (noise std = 1)."""
+    return dict(path=[tuple(map(float, p)) for p in path], bpm=bpm, breath_mm=breath_mm, amp=amp,
+                still_amp=still_amp)
+
+
+def _interp_path(path, t):
+    tp = np.array([p[0] for p in path])
+    x = np.interp(t, tp, [p[1] for p in path])
+    y = np.interp(t, tp, [p[2] for p in path])
+    return x, y
+
+
+def simulate_scene(people, cfg, seconds: float, seed: int = 0, *, noise: float = 1.0,
+                   leak_amp: float = 2000.0, n_clutter: int = 6, clutter_amp: float = 30.0,
+                   drift_rad_per_s: float = 2e-4, hw_phase: bool = True,
+                   cal_err_rad: float = 0.0, cal_err=None, leak_pn_rad: float = 0.0) -> np.ndarray:
+    """Slow-time [channels, n] at cfg.slow_fs for the virtual channels of `cfg` (Config.channels()).
+
+    Physics: every scatterer at p adds a * exp(-j 2 pi f_c (|p - tx| + |p - rx|) / c) to channel c.
+    - direct TX->RX leakage (dominant) and a few static furniture reflections
+    - per-channel hardware phase (cables, filters, TX/RX stream offset) on everything (hw_phase)
+    - common LO phase drift, white noise
+    - `leak_pn_rad`: white LO phase noise (rad rms per slow sample) on the leakage - common to all
+      channels, as on real hardware (the TX and RX synthesizers are shared by both channels)
+    - `cal_err_rad` / `cal_err`: per-channel phase error on reflections but NOT on the leakage
+      (imperfect antenna model) - what `calibrate --array` corrects
+    People: walking (speed > 5 cm/s) -> body + limb echo; standing -> breathing + slow sway.
+    """
+    rng = np.random.default_rng(seed)
+    fs = cfg.slow_fs
+    n = int(seconds * fs)
+    t = np.arange(n) / fs
+    chans = cfg.channels()
+    C = len(chans)
+    rx = np.array(cfg.rx_pos, float)
+    tx = np.array(cfg.tx_pos, float)
+    kf = np.array([2 * np.pi * f / SPEED_OF_LIGHT for *_, f in chans])     # rad / m per channel
+    ri = np.array([c[0] for c in chans])
+    ti = np.array([c[1] for c in chans])
+
+    def paths(px, py):
+        """Bistatic path length [C, len(px)] for scatterer positions."""
+        dt = np.hypot(px[None, :] - tx[ti, 0, None], py[None, :] - tx[ti, 1, None])
+        dr = np.hypot(px[None, :] - rx[ri, 0, None], py[None, :] - rx[ri, 1, None])
+        return dt + dr
+
+    hw = np.exp(1j * rng.uniform(0, 2 * np.pi, C)) if hw_phase else np.ones(C)
+    if cal_err is None:
+        cal_err = np.exp(1j * rng.normal(0, cal_err_rad, C)) if cal_err_rad else np.ones(C)
+    leak_len = np.hypot(*(tx[ti] - rx[ri]).T)
+    leak = leak_amp * np.exp(-1j * kf * leak_len)
+    static = leak.copy()
+    for _ in range(n_clutter):
+        px, py = rng.uniform(-4, 4), rng.uniform(0.5, 7)
+        static = static + cal_err * clutter_amp * rng.uniform(0.3, 1) * np.exp(
+            -1j * kf * paths(np.array([px]), np.array([py]))[:, 0])
+    out = np.repeat(static[:, None], n, axis=1)
+
+    for pi_, p in enumerate(people):
+        x, y = _interp_path(p["path"], t)
+        r = np.maximum(np.hypot(x, y), 0.3)
+        ux, uy = x / r, y / r
+        v = np.hypot(np.gradient(x, 1 / fs), np.gradient(y, 1 / fs))
+        walking = v > 0.05
+        # smooth the walking/still mix over ~0.5 s
+        wmix = np.convolve(walking.astype(float), np.ones(fs // 2) / (fs // 2), "same")
+        fb = p["bpm"] / 60.0 * (1 + 0.03 * np.sin(2 * np.pi * t / 40 + pi_))
+        breath = p["breath_mm"] / 2e3 * np.sin(2 * np.pi * np.cumsum(fb) / fs + rng.uniform(0, 6.3))
+        sway = np.convolve(rng.normal(0, 2e-4, n), np.ones(fs) / fs, "same")
+        d_still = (breath + sway) * (1 - wmix)
+        limb = 0.05 * np.sin(2 * np.pi * 1.8 * t) * wmix
+        spread = (3.0 / r) ** 2
+        a_walk = p["amp"] * (1 + 0.3 * np.sin(2 * np.pi * 0.7 * t + pi_)) * wmix
+        a_still = p["still_amp"] * (1 - wmix)
+        body = paths(x + ux * d_still, y + uy * d_still)
+        lmb = paths(x + ux * limb, y + uy * limb)
+        out += cal_err[:, None] * spread * ((a_walk + a_still) * np.exp(-1j * kf[:, None] * body)
+                                            + 0.3 * a_walk * np.exp(-1j * kf[:, None] * lmb))
+
+    if leak_pn_rad:
+        out += leak[:, None] * (np.exp(1j * rng.normal(0, leak_pn_rad, n)) - 1)[None, :]
+    drift = np.cumsum(rng.normal(0, drift_rad_per_s / np.sqrt(fs), n))
+    out = hw[:, None] * out * np.exp(1j * drift)[None, :]
+    out += noise / np.sqrt(2) * (rng.normal(size=(C, n)) + 1j * rng.normal(size=(C, n)))
+    return out
+
+
+def sim_cal_err(cfg, seed: int = 0, std_rad: float = 0.0) -> np.ndarray:
+    """Per-channel antenna phase errors for a simulated session (none by default)."""
+    if not std_rad:
+        return np.ones(cfg.n_channels, np.complex128)
+    return np.exp(1j * np.random.default_rng(seed + 99).normal(0, std_rad, cfg.n_channels))
+
+
+def demo_people(seconds: float = 120.0):
+    """Default `--sim --map` scene: one person walking back and forth on the left, one sitting
+    still on the right, and a visitor who walks in, stands for a while and leaves."""
+    walk = [(0, -3.0, 5.0)]
+    tt = 0.0
+    while tt < seconds:
+        walk += [(tt + 6, -0.8, 1.8), (tt + 12, -3.0, 5.0)]
+        tt += 12
+    sitter = [(0, 2.0, 3.0), (seconds, 2.0, 3.0)]
+    visitor = [(0, 0.5, 7.5), (20, 0.5, 7.5), (28, 0.6, 4.0), (60, 0.6, 4.0), (68, 0.5, 7.5),
+               (seconds, 0.5, 7.5)]
+    return [person(walk), person(sitter, bpm=14), person(visitor, amp=5.0, bpm=18)]

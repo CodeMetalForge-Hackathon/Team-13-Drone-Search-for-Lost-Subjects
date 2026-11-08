@@ -15,26 +15,28 @@ EMPTY, MOVING, STILL = "EMPTY", "MOVING", "STILL"
 
 
 class Ring:
-    """Fixed-size complex ring buffer."""
+    """Fixed-size complex ring buffer along the last axis (1D, or `channels` x size)."""
 
-    def __init__(self, size: int):
-        self.buf = np.zeros(size, np.complex128)
+    def __init__(self, size: int, channels: int | None = None):
+        self.buf = np.zeros(size if channels is None else (channels, size), np.complex128)
         self.size = size
-        self.count = 0  # total samples ever written
+        self.count = 0  # total samples ever written (per channel)
 
     def push(self, x: np.ndarray) -> None:
-        x = x[-self.size:]
-        i = self.count % self.size
-        first = min(len(x), self.size - i)
-        self.buf[i:i + first] = x[:first]
-        self.buf[:len(x) - first] = x[first:]
-        self.count += len(x)
+        n_in = x.shape[-1]
+        x = x[..., -self.size:]
+        n = x.shape[-1]
+        i = (self.count + n_in - n) % self.size
+        first = min(n, self.size - i)
+        self.buf[..., i:i + first] = x[..., :first]
+        self.buf[..., :n - first] = x[..., first:]
+        self.count += n_in
 
     def last(self, n: int) -> np.ndarray:
         n = min(n, self.count, self.size)
         end = self.count % self.size
         idx = (np.arange(end - n, end)) % self.size
-        return self.buf[idx]
+        return self.buf[..., idx]
 
 
 class LockedReading:
@@ -282,7 +284,12 @@ class Pipeline:
         self.hp.push(self.clutter.process(x))
 
     def feed(self, x: np.ndarray) -> list[Status]:
-        """Ingest samples; returns one Status per elapsed update interval."""
+        """Ingest samples; returns one Status per elapsed update interval.
+
+        Multichannel input [channels, n] is reduced to the reference channel (RX1 x TX1, tone 0).
+        """
+        if x.ndim == 2:
+            x = x[0]
         out = []
         while len(x):
             take = min(len(x), self.step_n - self._pending)

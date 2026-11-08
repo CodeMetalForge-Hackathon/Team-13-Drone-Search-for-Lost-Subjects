@@ -1,4 +1,4 @@
-"""Signal processing for CW Doppler presence detection (pure numpy/scipy, no hardware)."""
+"""Signal processing for multi-tone CW Doppler radar (pure numpy/scipy, no hardware)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -49,28 +49,69 @@ class ToneDemodulator:
         return mixed.reshape(-1, self.dec).mean(axis=1)
 
 
+class MultiToneDemodulator:
+    """Integrate-and-dump demodulation of many tones on several RX streams at once.
+
+    All tones lie on a grid with period `period` samples (tone_grid = fs / period) and `dec` is a
+    multiple of that period, so the mixing reference is identical in every output block. Each block
+    is first folded modulo the period (sum of dec/period rows), then one small matrix product
+    against a (period x n_tones) reference gives every tone: ~10x cheaper than mixing each tone.
+
+    process(buf[n_rx, n]) -> slow time [n_rx * n_tones, n_blocks], rx-major (rx0 tones, rx1 tones).
+    Leftover samples are carried to the next call, so blocks stay aligned to the stream start.
+    """
+
+    def __init__(self, tones, sample_rate: int, dec: int, period: int, n_rx: int = 2):
+        if dec % period:
+            raise ValueError("dec must be a multiple of the tone period")
+        f = np.asarray(tones, float)
+        if np.any(np.abs(f * period / sample_rate - np.round(f * period / sample_rate)) > 1e-9):
+            raise ValueError("every tone must complete whole cycles in one period")
+        m = np.arange(period)
+        self.ref = (np.exp(-2j * np.pi * np.outer(m, f) / sample_rate) / dec).astype(np.complex64)
+        self.dec, self.period, self.n_rx, self.n_tones = dec, period, n_rx, len(f)
+        self._left = np.zeros((n_rx, 0), np.complex64)
+
+    def process(self, buf: np.ndarray) -> np.ndarray:
+        buf = np.asarray(buf, np.complex64).reshape(self.n_rx, -1)
+        data = np.concatenate([self._left, buf], axis=1) if self._left.shape[1] else buf
+        usable = data.shape[1] // self.dec * self.dec
+        self._left = data[:, usable:].copy()
+        nb = usable // self.dec
+        if nb == 0:
+            return np.zeros((self.n_rx * self.n_tones, 0), np.complex128)
+        folded = data[:, :usable].reshape(self.n_rx, nb, self.dec // self.period, self.period).sum(axis=2)
+        out = folded @ self.ref                     # (n_rx, nb, n_tones)
+        return out.transpose(0, 2, 1).reshape(self.n_rx * self.n_tones, nb).astype(np.complex128)
+
+
 def block_decimate(x: np.ndarray, factor: int) -> np.ndarray:
-    n = len(x) // factor * factor
-    return x[len(x) - n:].reshape(-1, factor).mean(axis=1)
+    """Block-average along the last axis (keeps the most recent samples)."""
+    n = x.shape[-1] // factor * factor
+    return x[..., x.shape[-1] - n:].reshape(*x.shape[:-1], -1, factor).mean(axis=-1)
 
 
 # ---------------------------------------------------------------------------
 # Clutter handling
 # ---------------------------------------------------------------------------
 class ClutterFilter:
-    """Stateful one-pole running mean; output = input - static clutter estimate."""
+    """Stateful one-pole running mean; output = input - static clutter estimate.
+
+    Works on 1D streams or on [channels, n] (independent state per channel, along the last axis).
+    """
 
     def __init__(self, tau_s: float, fs: float):
         self.a = min(1.0, 1.0 / (tau_s * fs))
         self._zi = None
 
     def process(self, x: np.ndarray) -> np.ndarray:
-        if len(x) == 0:
+        if x.shape[-1] == 0:
             return x
         b, a = [self.a], [1.0, -(1.0 - self.a)]
         if self._zi is None:
-            self._zi = signal.lfiltic(b, a, [x[0]], [x[0]]).astype(np.complex128)
-        mean, self._zi = signal.lfilter(b, a, x, zi=self._zi)
+            # steady state for a constant input equal to the first sample
+            self._zi = ((1.0 - self.a) * x[..., :1]).astype(np.complex128)
+        mean, self._zi = signal.lfilter(b, a, x, axis=-1, zi=self._zi)
         return x - mean
 
     def reset(self) -> None:
@@ -80,28 +121,33 @@ class ClutterFilter:
 class PhaseJumpCorrector:
     """Undo sudden rotations of the whole (clutter-dominated) slow-time vector.
 
-    If the Pluto drops samples, the received tone shifts phase relative to our
-    reference, which rotates everything, clutter included. The static clutter
-    dominates, so its phase should never move much between two chunks 0.1 s apart.
+    If the radio drops samples (or TX underruns), each received tone shifts phase relative to our
+    reference, which rotates everything, clutter included. The static clutter dominates, so its
+    phase should never move much between two chunks 0.1 s apart. 1D or [channels, n]: each
+    channel (tone) is corrected on its own, since the jump is 2*pi*f*dt, different per tone.
     """
 
     def __init__(self, threshold_rad: float):
         self.thr = threshold_rad
-        self.rot = 1.0 + 0j
+        self.rot = None
         self.prev = None
         self.jumps = 0
 
     def process(self, chunk: np.ndarray) -> np.ndarray:
-        if len(chunk) == 0:
+        if chunk.shape[-1] == 0:
             return chunk
-        out = chunk * self.rot
-        m = out.mean()
-        if self.prev is not None and abs(m) > 0 and abs(self.prev) > 0:
-            d = np.angle(m / self.prev)
-            if abs(d) > self.thr:
-                corr = np.exp(-1j * d)
-                self.rot *= corr
-                out = out * corr
+        if self.rot is None:
+            self.rot = np.ones(chunk.shape[:-1], np.complex128)
+        out = chunk * self.rot[..., None]
+        m = out.mean(axis=-1)
+        if self.prev is not None:
+            ok = (np.abs(m) > 0) & (np.abs(self.prev) > 0)
+            d = np.where(ok, np.angle(m * np.conj(self.prev)), 0.0)
+            jump = np.abs(d) > self.thr
+            if np.any(jump):
+                corr = np.where(jump, np.exp(-1j * d), 1.0)
+                self.rot = self.rot * corr
+                out = out * corr[..., None]
                 m = m * corr
                 self.jumps += 1
         self.prev = m
