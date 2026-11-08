@@ -19,7 +19,7 @@ Wire format (little endian), one message after another:
   type 'C': i64 t_ns, u16 width, u16 height, width*height bytes (mono8)
 
 Usage
-  python3 live/streamer.py                                  # Pi: camera + /dev/serial0
+  python3 live/streamer.py                                  # Pi: camera + GPIO UART (auto: /dev/serial0, or /dev/ttyAMA0 on a Pi 5)
   python3 live/streamer.py --port /dev/ttyAMA0              # Pi 5 GPIO UART, see README
   python3 live/streamer.py --replay recordings/20261107_233223   # laptop test, no hardware
 """
@@ -379,7 +379,7 @@ def main():
     ap.add_argument("--lens-position", type=float, default=0.5)
     ap.add_argument("--sensor-size", default="2304x1296")
     ap.add_argument("--rotate", type=int, choices=(0, 180), default=180)
-    ap.add_argument("--port", default="/dev/serial0")
+    ap.add_argument("--port", default=imu_check.default_port(), help="GPIO UART (auto: ttyAMA0 on a Pi 5)")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--skip-imu-check", action="store_true")
     args = ap.parse_args()

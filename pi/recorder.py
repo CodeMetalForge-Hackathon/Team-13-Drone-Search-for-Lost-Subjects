@@ -29,6 +29,8 @@ import threading
 import time
 
 import serial
+
+import imu_check  # same folder: packet parser + UART auto-detect
 from picamera2 import Picamera2
 
 from libcamera import Transform
@@ -108,7 +110,7 @@ def main():
     ap.add_argument("--rotate", type=int, choices=(0, 180), default=180,
                     help="image rotation done in the sensor (no CPU cost); 180 = camera mounted "
                          "upside down. Use the same value for calibration and flights.")
-    ap.add_argument("--port", default="/dev/serial0")
+    ap.add_argument("--port", default=imu_check.default_port(), help="GPIO UART (auto: ttyAMA0 on a Pi 5)")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--duration", type=float, default=0, help="seconds, 0 = until Ctrl+C")
     ap.add_argument("--skip-imu-check", action="store_true",

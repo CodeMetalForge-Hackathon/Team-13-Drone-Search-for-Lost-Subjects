@@ -33,6 +33,8 @@ import threading
 import time
 
 import numpy as np
+
+import imu_check  # same folder: UART auto-detect
 from PIL import Image, ImageDraw
 
 PKT = struct.Struct("<2sHI6fH")  # same 34-byte packet as firmware/app_imu_uart
@@ -225,7 +227,7 @@ def main():
     ap.add_argument("--lens-position", type=float, default=0.5)
     ap.add_argument("--sensor-size", default="2304x1296")
     ap.add_argument("--rotate", type=int, choices=(0, 180), default=180)
-    ap.add_argument("--port", default="/dev/serial0")
+    ap.add_argument("--port", default=imu_check.default_port(), help="GPIO UART (auto: ttyAMA0 on a Pi 5)")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--no-imu", action="store_true")
     ap.add_argument("--gyro-range", type=float, default=5.0, help="strip half-height in rad/s")

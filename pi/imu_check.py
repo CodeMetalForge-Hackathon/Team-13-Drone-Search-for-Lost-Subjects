@@ -23,6 +23,16 @@ SYNC = b"\xA5\x5A"
 PKT = struct.Struct("<2sHI6fH")  # same 34-byte packet as firmware/app_imu_uart
 
 
+def default_port():
+    """The UART on GPIO14/15. /dev/serial0 is right on the Zero 2 W, but on a Pi 5 it points to the
+    separate debug connector (ttyAMA10); there the GPIO UART is /dev/ttyAMA0 (dtparam=uart0=on)."""
+    import os
+    s0 = os.path.realpath("/dev/serial0")
+    if s0.endswith("ttyAMA10") and os.path.exists("/dev/ttyAMA0"):
+        return "/dev/ttyAMA0"
+    return "/dev/serial0"
+
+
 def parse(buf):
     """Parse complete packets from a bytearray (consumed in place). Returns (packets, crc_errors)."""
     out, bad = [], 0
@@ -63,7 +73,7 @@ def check(ser, seconds):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default="/dev/serial0")
+    ap.add_argument("--port", default=default_port(), help="GPIO UART (auto: ttyAMA0 on a Pi 5)")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--once", action="store_true", help="check for 1 s, exit 0 only if OK")
     args = ap.parse_args()
