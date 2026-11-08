@@ -14,6 +14,7 @@
 | `firmware/app_imu_uart/` | Out-of-tree Crazyflie app: streams IMU over UART2 |
 | `pi/recorder.py` | Records camera + IMU stream on the Pi, no processing |
 | `offline/convert.py` | Parses IMU, fits the CF→Pi clock, writes EuRoC + bag, sync check |
+| `offline/demo_report.py`, `demo.sh` | Demo outputs: stats, IMU-only vs VIO plot, side-by-side video |
 | `offline/make_synthetic.py` | Fake recording with known answers, to test the converter |
 | `calib/` | Kalibr target/IMU templates, Kalibr → OpenVINS config helper, OpenVINS starter config |
 | `docker/` | Docker install + Kalibr / OpenVINS images for WSL, `run.sh` wrapper |
@@ -171,6 +172,28 @@ Close RViz to stop the container; `traj_est.txt` is complete once the bag has fi
 The camera-IMU time offset is passed via `timeshift_cam_imu` in the config, so convert with
 `--cam-shift-ms 0`. For tools that don't model a time offset (e.g. ORB-SLAM3 on the EuRoC folder),
 reconvert with `--cam-shift-ms <1000 × Kalibr timeshift_cam_imu>`.
+
+## 8. Demo outputs in one command
+
+After calibration (`calib/openvins/crazyflie/` exists), turn any recording into demo material:
+
+```bash
+./demo.sh <stamp>            # e.g. ./demo.sh 20261107_222749 ; add --rviz to watch OpenVINS live
+```
+
+It converts the recording, runs OpenVINS in Docker and writes into `data/<stamp>/`:
+
+| File | What |
+|---|---|
+| `summary.json` | VIO path length, start-to-end gap, drift %, IMU-only end error |
+| `traj_topdown.png` | VIO trajectory from above, start and end marked |
+| `imu_vs_vio.png` | distance from the start over time: IMU-only dead reckoning vs VIO |
+| `demo.mp4` | camera on the left, trajectory drawing itself on the right |
+| `openvins.log` | OpenVINS output, if something goes wrong |
+
+For a loop run (start and end on the same taped X) the start-to-end gap is the drift number for the demo.
+The IMU-only baseline works even on a recording where the drone sits still on the desk.
+`offline/demo_report.py data/<name> --video` reruns only the report.
 
 ### Flight protocol
 
