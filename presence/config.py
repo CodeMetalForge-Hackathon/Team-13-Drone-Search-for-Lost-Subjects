@@ -43,7 +43,7 @@ class Config:
     auto_floor: bool = True
     floor_window_s: float = 600.0        # history used to learn the background
     floor_percentile: float = 20.0       # people move intermittently -> low percentile = background
-    floor_margin_db: float = 4.0         # motion threshold = max(base, floor + margin)
+    floor_margin_db: float = 3.0         # motion threshold = max(base, floor + margin)
     floor_max_rise_db: float = 20.0      # never raise the threshold more than this above base
     floor_warmup_s: float = 15.0         # use the base threshold until this much history exists
     floor_rise_db_per_min: float = 3.0   # floor may rise only this fast (falls instantly), so a person
@@ -69,14 +69,22 @@ class Config:
     breath_lock_span_bpm: float = 2.5
     breath_motion_margin_db: float = 6.0  # heart mode: breathing only restarts on motion this much
                                           # stronger than the heart gate (small fidgets don't reset it)
+    # disturbance tolerance: slight / brief motion is absorbed instead of restarting a window.
+    # A window restarts when motion is stronger than *_tol_db above its gate, or lasts longer than *_tol_s.
+    heart_motion_tol_db: float = 3.0     # heart: motion up to thr + 3 dB ...
+    heart_motion_tol_s: float = 0.6      # ... and shorter than 0.6 s is tolerated
+    breath_motion_tol_db: float = 9.0    # breathing (heart mode): up to thr + margin + 9 dB ...
+    breath_motion_tol_s: float = 1.0     # ... and shorter than 1 s is tolerated
 
     # --- detector timing ---------------------------------------------------
     update_s: float = 0.2
-    motion_confirm_s: float = 0.4        # motion above threshold this long -> MOVING
-    motion_hold_s: float = 2.0           # stay MOVING this long after motion stops
+    motion_confirm_s: float = 0.2        # motion above threshold this long -> MOVING
+    motion_hold_s: float = 1.5           # stay MOVING this long after motion stops
     breath_confirm_s: float = 5.0        # stable breathing lock this long (from EMPTY) -> STILL
     breath_rate_span_bpm: float = 2.0    # max rate wander during that confirmation
-    absent_timeout_s: float = 30.0       # no motion / no breathing this long -> EMPTY
+    absent_timeout_s: float = 20.0       # no motion / no breathing lock this long -> EMPTY
+                                         # (>= breathing window + lock time, so a person who sits
+                                         # down is confirmed before it expires)
 
     @property
     def dec(self) -> int:

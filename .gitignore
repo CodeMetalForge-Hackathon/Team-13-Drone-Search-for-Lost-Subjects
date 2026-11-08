@@ -4,3 +4,4 @@ __pycache__/
 *.npz
 calib.json
 .pytest_cache/
+*.mp4

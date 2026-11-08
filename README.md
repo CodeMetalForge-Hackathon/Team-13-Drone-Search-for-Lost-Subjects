@@ -48,9 +48,12 @@ Shows the live camera frame with the radar drawn on top: the state banner (or th
 
 **Range cutoff, live:** `[` / `]` move the range cutoff 1 dB closer / farther (12 dB halves the distance), and `s` saves it to `calib.json`. The right-hand panel shows your motion level against the cutoff line.
 
-**Network stream:** `--rtsp` also serves the view as H.264 over RTSP on port 8080 (`--rtsp-port`), at `rtsp://<pi-ip>:8080/osd`. Open it with VLC (Media → Open Network Stream) or `ffplay -rtsp_transport tcp rtsp://<pi-ip>:8080/osd`. Add `--no-window` to stream without a local window, e.g. over SSH. It uses ffmpeg/libx264 (the Pi 5 has no hardware H.264 encoder); 720p at 15 fps takes about 10% CPU. `--rtsp-fps` and `--rtsp-kbps` tune the stream.
+**Network viewing:**
+- `--web`: a live browser view (MJPEG over HTTP) at `http://<pi-ip>:8081/` (`--web-port`) that works on any phone or laptop with no app. It adds about 30 ms of delay and uses roughly 15 Mbit/s per viewer at 720p.
+- `--mp4 [FILE]` records the whole overlay video (camera + graphs) to an MP4. The default name is `osd_<date>_<time>.mp4`, and `--mp4-fps` sets the frame rate (default 30). The file is fragmented MP4, so it stays playable even if the program is killed or loses power mid-recording. It works with `replay` too, to render a recording into a video.
+- `--no-window` streams without a local window, e.g. over SSH.
 
-`--camera auto` (default) uses the Pi camera through picamera2 if one is connected, else `/dev/video0`, else no camera. You can also pass `picam`, a V4L2 index, a device path or a video file. `--cam-size 1280x720` sets the capture and window size. `--osd` also works with `replay`.
+`--camera auto` (default) uses the Pi camera through picamera2 if one is connected, else `/dev/video0`, else no camera. You can also pass `picam`, a V4L2 index, a device path or a video file. `--cam-size 1280x720` sets the capture and window size, and `--cam-rotate` (default 180, for an upside-down mount) rotates the image; use `--cam-rotate 0` for a normally mounted camera. `--osd` also works with `replay`.
 
 ## Heart rate (`run --heart`)
 

@@ -29,27 +29,37 @@ def banner(s: Status) -> tuple[str, str]:
     return text, STATE_COLORS[label]
 
 
+def _short_wait(w: str) -> str:
+    return w.replace(" - nothing may move in range", "")
+
+
 def heart_cards(s: Status, heart_snr_db: float, boundary_m: float | None):
     """Heart-mode cards: [(heading, value, caption, hex colour)] for STATUS, BREATHING, HEART RATE."""
     rng = f"within ~{boundary_m:g} m" if boundary_m else "in range"
     far = f"motion beyond ~{boundary_m:g} m ignored" if (s.far_motion and boundary_m) else ""
     if s.state == MOVING:
         st = ("MOVING", far or f"person moving {rng}", ORANGE)
+    elif s.state == EMPTY:
+        st = ("NO PERSON", far or f"nobody {rng}", GREY)
+    elif not s.confirmed:
+        st = ("STILL?", f"no breathing yet - no person in {s.absent_in_s:.0f} s", YELLOW)
     elif s.heart_bpm is not None:
         st = ("STILL", "breathing + heart rate locked", RED)
-    elif s.breath_bpm is not None:
-        st = ("STILL", "breathing locked, heart measuring", GREEN)
-    elif s.state == STILL:
-        st = ("STILL", "acquiring - sit still 0.3-0.5 m away", YELLOW)
     else:
-        st = ("NO PERSON", far or f"nobody {rng}", GREY)
+        st = ("STILL", "breathing locked, heart measuring", GREEN)
 
-    b = s.breath
-    if s.breath_bpm is not None:
-        avg = s.breath_last_bpm if s.breath_last_bpm is not None else s.breath_bpm
-        br = (f"{avg:.0f} /min", f"live  -  SNR {b.snr_db:.0f} dB" if b else "live", GREEN)
+    # BREATHING / HEART RATE show the current estimate - the same number as the live charts.
+    # The held "last reading" is shown only while there is no current estimate.
+    # nobody present: the estimators are only fitting background noise - don't show their numbers
+    b = s.breath if s.state != EMPTY else None
+    if b is not None:
+        if s.breath_bpm is not None:
+            br = (f"{b.bpm:.0f} /min", f"live  -  SNR {b.snr_db:.0f} dB", GREEN)
+        else:
+            br = (f"{b.bpm:.0f} /min", f"unconfirmed  -  SNR {b.snr_db:.0f} dB", YELLOW)
     elif s.breath_last_bpm is not None:
-        br = (f"{s.breath_last_bpm:.0f} /min", f"last reading, {ago(s.breath_last_age_s)}", DKGREEN)
+        cap = f"last reading, {ago(s.breath_last_age_s)}"
+        br = (f"{s.breath_last_bpm:.0f} /min", f"{cap}  -  {s.breath_wait}" if s.breath_wait else cap, DKGREEN)
     elif s.breath_wait:
         br = ("--", s.breath_wait, GREY)
     elif s.state != EMPTY:
@@ -58,17 +68,21 @@ def heart_cards(s: Status, heart_snr_db: float, boundary_m: float | None):
         br = ("--", "", GREY)
 
     h = s.heart
-    if s.heart_bpm is not None:
-        avg = s.heart_last_bpm if s.heart_last_bpm is not None else s.heart_bpm
-        hr = (f"{avg:.0f} bpm", f"average of {max(s.heart_last_span_s, 1):.0f} s locked", RED)
+    if h is not None and s.state != EMPTY:
+        if s.heart_bpm is not None:
+            hr = (f"{h.bpm:.0f} bpm", f"live  -  confidence {h.snr_db:.0f} dB", RED)
+        else:
+            cap = (f"confirming  -  confidence {h.snr_db:.0f} dB" if h.snr_db >= heart_snr_db else
+                   f"unconfirmed  -  confidence {h.snr_db:.0f}/{heart_snr_db:.0f} dB")
+            hr = (f"{h.bpm:.0f} bpm", cap, YELLOW)
     elif s.heart_last_bpm is not None:
-        hr = (f"{s.heart_last_bpm:.0f} bpm", f"last reading, {ago(s.heart_last_age_s)}", DKRED)
+        cap = f"last reading, {ago(s.heart_last_age_s)}"
+        wait = _short_wait(s.heart_wait) if s.heart_wait.startswith("hold still") else ""
+        hr = (f"{s.heart_last_bpm:.0f} bpm", f"{cap}  -  {wait}" if wait else cap, DKRED)
     elif s.heart_wait.startswith("hold still"):
-        hr = ("--", s.heart_wait.replace(" - nothing may move in range", ""), GREY)
+        hr = ("--", _short_wait(s.heart_wait), GREY)
     elif s.state == EMPTY:
         hr = ("--", "", GREY)
-    elif h is not None:
-        hr = ("...", f"measuring - confidence {h.snr_db:.0f}/{heart_snr_db:.0f} dB", YELLOW)
     else:
         hr = ("...", "measuring", YELLOW)
     return [("STATUS", *st), ("BREATHING", *br), ("HEART RATE", *hr)]

@@ -232,9 +232,33 @@ class Status:
     breath_last_bpm: float | None = None  # held moving average of the last breathing lock
     breath_last_age_s: float = 0.0
     breath_wait: str = ""                 # breathing's own stillness countdown
+    absent_in_s: float = 0.0              # unconfirmed STILL: seconds until it falls back to EMPTY
     proximity: bool = False
     jumps: int = 0
     extra: dict = field(default_factory=dict)
+
+
+class MotionGate:
+    """Decides when motion restarts a measurement window, tolerating slight disturbances.
+
+    Motion above the gate restarts the window only if it is strong (more than tol_db above the
+    gate) or sustained (a continuous run longer than tol_s). Brief, weak motion is absorbed."""
+
+    def __init__(self, tol_db: float, tol_s: float):
+        self.tol_db, self.tol_s = tol_db, tol_s
+        self.run_start: float | None = None
+        self.last_reset_t = -np.inf
+
+    def update(self, t: float, excess_db: float | None) -> float:
+        """excess_db: motion above the gate (dB), None when below it. Returns the last reset time."""
+        if excess_db is None:
+            self.run_start = None
+            return self.last_reset_t
+        if self.run_start is None:
+            self.run_start = t
+        if excess_db > self.tol_db or t - self.run_start >= self.tol_s:
+            self.last_reset_t = t
+        return self.last_reset_t
 
 
 class Pipeline:
@@ -256,14 +280,14 @@ class Pipeline:
         self.heart_tracker = HeartTracker(cfg.heart_snr_db, cfg.heart_lock_s, cfg.heart_span_bpm)
         self.heart_avg = SpectrumAverager(cfg.heart_avg_alpha)
         self._heart_next_t = 0.0
-        self._last_any_motion_t = -np.inf
+        self.heart_gate = MotionGate(cfg.heart_motion_tol_db, cfg.heart_motion_tol_s)
+        self.breath_gate = MotionGate(cfg.breath_motion_tol_db, cfg.breath_motion_tol_s)
         self._heart: HeartResult | None = None
         self._heart_bpm: float | None = None
         self._heart_wait = ""
         self._heart_locks: deque = deque()      # (t, bpm) of locked readings, moving window
         self._heart_last: float | None = None
         self._heart_last_t = -np.inf
-        self._last_big_motion_t = -np.inf
         self._breath_wait = ""
         self.breath_reading = LockedReading(cfg.breath_lock_s, cfg.breath_lock_span_bpm,
                                             cfg.heart_last_avg_s, cfg.heart_last_hold_s)
@@ -300,17 +324,17 @@ class Pipeline:
         if self._heart_last is not None and t - self._heart_last_t > self.cfg.heart_last_hold_s:
             self._heart_last, self._heart_locks = None, deque()
 
-    def _update_heart(self, t: float, near_motion: bool, br) -> None:
-        """Heart estimate every heart_every_s, only over a window with no motion inside the range
-        boundary (calibrate --boundary). Without a boundary, any detected motion pauses it: a CW
-        radar cannot separate a nearby bystander's slow movements from a heartbeat."""
+    def _update_heart(self, t: float, near_excess: float | None, br) -> None:
+        """Heart estimate every heart_every_s, only over a window without real motion inside the
+        range boundary (calibrate --boundary). Without a boundary, any clear motion pauses it: a CW
+        radar cannot separate a nearby bystander's slow movements from a heartbeat. Slight, brief
+        disturbances (MotionGate tolerance) are absorbed instead of restarting the window."""
         c = self.cfg
-        if near_motion:
-            self._last_any_motion_t = t
+        last_reset = self.heart_gate.update(t, near_excess)
         if t < self._heart_next_t:
             return
         self._heart_next_t = t + c.heart_every_s
-        quiet = t - self._last_any_motion_t - c.motion_win_s
+        quiet = t - last_reset - c.motion_win_s
         if quiet < c.heart_win_s:
             self._heart = None
             self._heart_wait = (f"hold still - nothing may move in range ({max(0.0, quiet):.0f}/"
@@ -355,9 +379,7 @@ class Pipeline:
             m = c.breath_motion_margin_db
             big = motion_db > thr + m and (self.th.motion_abs_db is None
                                            or motion_abs >= self.th.motion_abs_db + m)
-            if big:
-                self._last_big_motion_t = t
-            quiet = t - self._last_big_motion_t - c.motion_win_s
+            quiet = t - self.breath_gate.update(t, motion_db - thr - m if big else None) - c.motion_win_s
         elif self.gate:
             quiet = t - self.detector.last_motion_t - c.motion_win_s
         else:
@@ -376,7 +398,8 @@ class Pipeline:
                                 self.fs // c.breath_fs, noise_psd=self.noise_psd)
         state = self.detector.step(t, motion_db, br, motion_abs, thr, still_abs)
         if c.heart:
-            self._update_heart(t, self.detector.is_motion(motion_db, motion_abs, thr), br)
+            near = self.detector.is_motion(motion_db, motion_abs, thr)
+            self._update_heart(t, motion_db - thr if near else None, br)
         self.history.append((t, motion_db, motion_abs, thr, still_abs))
         far_motion = (self.th.motion_abs_db is not None and motion_db > thr
                       and motion_abs < self.th.motion_abs_db)
@@ -391,6 +414,8 @@ class Pipeline:
                                          if self._heart_locks else 0.0),
                       breath_bpm=self.breath_reading.live, breath_last_bpm=self.breath_reading.last,
                       breath_last_age_s=self.breath_reading.age(t), breath_wait=self._breath_wait,
+                      absent_in_s=(max(0.0, c.absent_timeout_s - (t - self.detector.last_present_t))
+                                   if state == STILL and not self.detector.confirmed else 0.0),
                       jumps=self.jump.jumps if self.jump else 0)
 
 

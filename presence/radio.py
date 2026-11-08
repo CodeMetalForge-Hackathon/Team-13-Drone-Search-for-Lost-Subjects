@@ -106,7 +106,13 @@ class PlutoSource(Source):
             try:
                 self.q.put_nowait(slow)
             except queue.Full:
-                # dropping after demod keeps the mixing reference phase-continuous
+                # consumer stalled: drop the OLDEST chunk so what we deliver stays current
+                # (dropping after demod keeps the mixing reference phase-continuous)
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    pass
+                self.q.put_nowait(slow)
                 self.dropped_chunks += 1
 
     def read(self, timeout: float = 0.5) -> np.ndarray:

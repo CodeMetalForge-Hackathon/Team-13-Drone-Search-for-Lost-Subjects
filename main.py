@@ -35,7 +35,9 @@ def build_config(a) -> Config:
     if a.breath_win:
         cfg.breath_win_s = a.breath_win
     cfg.auto_floor = not getattr(a, "no_auto_floor", False)
-    cfg.heart = bool(getattr(a, "heart", False))
+    osd_view = _osd_mode(a)
+    # the OSD shows breathing and heart rate by default (heart mode); --no-heart for presence only
+    cfg.heart = bool(getattr(a, "heart", False)) or (osd_view and not getattr(a, "no_heart", False))
     if cfg.heart:
         cfg.breath_min_win_s = 10.0     # breathing reading appears ~8 s before heart rate
     cfg.validate()
@@ -80,17 +82,28 @@ def _recording_reader(src, rec: Recorder):
     return read_and_record
 
 
+def _osd_mode(a) -> bool:
+    """Any OSD output requested (window, browser view or MP4 recording)."""
+    return any(getattr(a, k, None) for k in ("osd", "web", "mp4"))
+
+
 def _add_osd_args(p):
     p.add_argument("--osd", action="store_true",
                    help="show the camera with the radar graphs overlaid (OpenCV window) instead of matplotlib")
     p.add_argument("--camera", default="auto",
                    help="osd: auto | picam | none | V4L2 index | device path / video file (default auto)")
+    p.add_argument("--cam-rotate", type=int, default=180, choices=(0, 90, 180, 270),
+                   help="osd: rotate the camera image (default 180: camera mounted upside down)")
     p.add_argument("--cam-size", default="1280x720", help="osd: camera / window size WxH")
     p.add_argument("--fullscreen", action="store_true", help="osd: start fullscreen (toggle with f)")
-    p.add_argument("--rtsp", action="store_true", help="osd: also stream the view over RTSP (rtsp://<pi>:PORT/osd)")
-    p.add_argument("--rtsp-port", type=int, default=8080, help="osd: RTSP port (default 8080)")
-    p.add_argument("--rtsp-fps", type=float, default=15.0, help="osd: stream frame rate (default 15)")
-    p.add_argument("--rtsp-kbps", type=int, default=2500, help="osd: stream bitrate (default 2500)")
+    p.add_argument("--web", action="store_true",
+                   help="osd: low-latency browser view (MJPEG over HTTP) at http://<pi>:WEB_PORT/")
+    p.add_argument("--web-port", type=int, default=8081, help="osd: browser view port (default 8081)")
+    p.add_argument("--mp4", nargs="?", const="auto", metavar="FILE.mp4",
+                   help="osd: record the overlay video (default name osd_<date>_<time>.mp4)")
+    p.add_argument("--mp4-fps", type=float, default=30.0, help="osd: recording frame rate (default 30)")
+    p.add_argument("--no-heart", action="store_true",
+                   help="osd: presence layout only (default shows breathing + heart rate cards)")
     p.add_argument("--no-window", action="store_true", help="osd: no local window (stream only, e.g. over SSH)")
 
 
@@ -111,7 +124,13 @@ def cmd_run(a):
     src = build_source(a, cfg)
     pipe = Pipeline(cfg, th)
     rec = Recorder(a.record)
-    src.start()
+    try:
+        src.start()
+    except Exception as e:                  # noqa: BLE001
+        if not (isinstance(src, PlutoSource) and _osd_mode(a)):
+            raise
+        print(f"[pluto] not available ({e}) - the OSD will keep retrying", flush=True)
+        src.finished = True
     last_print = [-1e9]
 
     def on_status(s):
@@ -126,28 +145,34 @@ def cmd_run(a):
                 rec.add(x)
                 for s in pipe.feed(x):
                     on_status(s)
-        elif a.osd or a.rtsp:
+        elif _osd_mode(a):
             import signal
 
             from presence import osd
             for sig in (signal.SIGINT, signal.SIGTERM):
                 signal.signal(sig, lambda *_: osd.STOP.set())
             size = tuple(int(v) for v in a.cam_size.lower().split("x"))
-            cam = osd.Camera(a.camera, size)
-            stream = None
-            if a.rtsp:
-                from presence.rtsp import RtspServer
-                stream = RtspServer(size, fps=a.rtsp_fps, port=a.rtsp_port, bitrate_kbps=a.rtsp_kbps)
-                print(f"[rtsp] streaming at {stream.url}  (H.264 {size[0]}x{size[1]} @ {a.rtsp_fps:g} fps)")
-            src.read = _recording_reader(src, rec)
+            cam = osd.Camera(a.camera, size, rotate=a.cam_rotate)
+            streams = []
+            if a.web:
+                from presence.mjpeg import MjpegServer
+                streams.append(MjpegServer(port=a.web_port))
+                print(f"[web] low-latency browser view at {streams[-1].url}")
+            if a.mp4:
+                from presence.mp4 import Mp4Recorder, default_name
+                path = default_name() if a.mp4 == "auto" else a.mp4
+                streams.append(Mp4Recorder(path, size, fps=a.mp4_fps))
+                print(f"[mp4] recording the overlay video to {path}")
+            live = isinstance(src, PlutoSource)
             try:
                 osd.OsdView(src, pipe, cam, on_status=on_status, heart=cfg.heart, ref_bpm=a.ref_bpm,
                             size=size, fullscreen=a.fullscreen,
                             save_thresholds=lambda t: (t.save(a.calib), a.calib)[1],
-                            stream=stream, window=not a.no_window).show()
+                            streams=streams, window=not a.no_window, on_samples=rec.add,
+                            reconnect=(lambda: PlutoSource(cfg)) if live else None).show()
             finally:
-                if stream is not None:
-                    stream.stop()
+                for out in streams:
+                    out.stop()
         else:
             import matplotlib
             if a.backend:
@@ -212,9 +237,9 @@ def _collect(src, pipe, seconds, every=25):
     return stats
 
 
-def _countdown(sec):
+def _countdown(sec, what="starting"):
     for k in range(int(sec), 0, -1):
-        print(f"\rstarting in {k:3d} s ", end="", flush=True)
+        print(f"\r{what} in {k:3d} s ", end="", flush=True)
         time.sleep(1)
     if sec:
         print()
@@ -231,10 +256,13 @@ def cmd_calibrate(a):
     seconds = a.seconds or 90.0
     src = build_source(a, cfg, scenario=[("empty", seconds + 5)])
     pipe = Pipeline(cfg, Thresholds(motion_db=np.inf), gate_breathing_on_motion=False, auto_floor=False)
-    print(f"Empty-area calibration ({seconds:.0f} s). Optional: the auto floor handles the motion "
-          "threshold without it. Nobody should be within range.")
-    _countdown(a.delay)
+    print(f"Empty-area (floor) calibration: {seconds:.0f} s of measurement. Updates only the motion / "
+          f"breathing floor thresholds in {a.calib}; the range cutoff is kept.")
+    print(">>> CLEAR THE AREA: everyone out of range, nothing moving.")
+    _countdown(a.delay, "measuring starts")
+    print(f">>> MEASURING - stay out for {seconds:.0f} s")
     stats = _collect(src, pipe, seconds)
+    print(">>> DONE - you can come back.")
     m = np.array([s.motion_db for s in stats])
     br = [s.breath for s in stats if s.breath is not None]
     if len(m) < 10 or len(br) < 10:
@@ -416,7 +444,8 @@ def main(argv=None):
                    help="boundary mode: you move at this distance; weaker motion is ignored afterwards")
     c.add_argument("--margin-boundary", type=float, default=0.0,
                    help="dB to lower the boundary threshold by (positive = slightly larger range)")
-    c.add_argument("--delay", type=float, default=0.0, help="countdown before starting (time to walk out)")
+    c.add_argument("--delay", type=float, default=10.0,
+                   help="countdown before measuring, to clear the area (default 10 s)")
     c.add_argument("--sim-scale", type=float, default=None,
                    help="sim only: echo scale of the person at the boundary (default 0.25 / 1.0 proximity)")
     c.set_defaults(func=cmd_calibrate, file=None)

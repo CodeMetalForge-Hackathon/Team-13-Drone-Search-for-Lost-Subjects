@@ -182,7 +182,7 @@ def test_near_breathing_detected_while_far_person_walks():
 def test_calibrate_boundary_cli(tmp_path, capsys):
     import main
     calib = tmp_path / "c.json"
-    main.main(["calibrate", "--sim", "--fast", "--boundary", "4", "--calib", str(calib)])
+    main.main(["calibrate", "--sim", "--fast", "--boundary", "4", "--calib", str(calib), "--delay", "0"])
     th = Thresholds.load(calib)
     assert th.motion_abs_db is not None and th.boundary_m == 4.0
     main.main(["run", "--sim", "--fast", "--headless", "--calib", str(calib), "--print-every", "20"])
@@ -197,7 +197,7 @@ from presence.sim import simulate_mix  # noqa: E402
 def prox_th(tmp_path_factory):
     import main
     calib = tmp_path_factory.mktemp("p") / "prox.json"
-    main.main(["calibrate", "--sim", "--fast", "--proximity", "1", "--calib", str(calib),
+    main.main(["calibrate", "--sim", "--fast", "--proximity", "1", "--calib", str(calib), "--delay", "0",
                "--session", str(calib.with_suffix(".npz"))])
     th = Thresholds.load(calib)
     assert th.still_abs_db is not None and th.motion_abs_db is not None
@@ -297,13 +297,42 @@ def test_breathing_reading_arrives_before_heart_and_is_held():
     assert all(s.breath_bpm is None and s.breath_last_bpm is not None for s in walking)
 
 
-def test_small_fidget_resets_heart_but_not_breathing():
+def _fidget_run(amp, dur):
     cfg = _heart_cfg()
     cfg.breath_min_win_s = 10.0
     x = simulate_mix([("still", 77)], [("empty", 77)], seed=72, breath_bpm=14, heart_mm=0.4,
-                     heart_bpm=68, noise=0.15, fidgets=[(45, 1.0, 0.3)])   # brief hand movement
-    st = Pipeline(cfg, Thresholds()).feed(x)
-    after = [s for s in st if 48 < s.t < 60]
+                     heart_bpm=68, noise=0.15, fidgets=[(45, dur, amp)])
+    return [s for s in Pipeline(cfg, Thresholds()).feed(x) if 48 < s.t < 62]
+
+
+def test_slight_fidget_is_tolerated_by_both_windows():
+    after = _fidget_run(0.3, 1.0)                                            # slight, brief twitch
+    assert not any(s.heart_wait.startswith("hold still") for s in after)
+    assert all(s.breath_wait == "" for s in after)
+    assert all(s.breath_bpm is not None for s in after)
+
+
+def test_hand_movement_resets_heart_but_not_breathing():
+    after = _fidget_run(1.0, 1.0)                                            # clear hand movement
     assert any(s.heart_wait.startswith("hold still") for s in after)        # heart restarted
     assert all(s.breath_wait == "" for s in after)                           # breathing did not
     assert sum(s.breath_bpm is not None for s in after) > 0.8 * len(after)  # and stays locked
+
+
+def test_big_movement_resets_both_windows():
+    after = _fidget_run(3.0, 3.0)
+    assert any(s.heart_wait.startswith("hold still") for s in after)
+    assert any(s.breath_wait.startswith("hold still") for s in after)
+
+
+def test_motion_gate_tolerance():
+    from presence.detector import MotionGate
+    g = MotionGate(tol_db=3.0, tol_s=0.6)
+    assert g.update(1.0, 1.0) == -np.inf            # weak
+    assert g.update(1.2, 1.0) == -np.inf            # weak, 0.2 s
+    assert g.update(1.4, None) == -np.inf           # over
+    assert g.update(2.0, 5.0) == 2.0                # strong -> reset
+    for t in (3.0, 3.2, 3.4):
+        g.update(t, 0.5)
+    assert g.update(3.6, 0.5) == 3.6                # weak but sustained 0.6 s -> reset
+
