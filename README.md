@@ -64,6 +64,12 @@ sudo reboot
 `disable-bt` frees the good UART (PL011) for `/dev/serial0`; the mini-UART can't hold 1 Mbaud reliably.
 Check the camera with `rpicam-hello --list-cameras`.
 
+**IMU check** (seconds, before every session): `python3 imu_check.py` prints the live IMU rate, gyro and accel.
+At rest `|acc|` should read about 1.00 g, and tilting the drone should move the gyro. `ALL ZEROS` means the
+Crazyflie's sensors never calibrated (its stabilizer only runs after it has been still after power-on):
+power-cycle it lying flat on the table and don't touch it for ~3 s. `NO DATA` means nothing arrives on the UART.
+`recorder.py` runs the same check for 1 s and refuses to record unless it passes (`--skip-imu-check` overrides).
+
 Bench test (CF powered, props off):
 
 ```bash

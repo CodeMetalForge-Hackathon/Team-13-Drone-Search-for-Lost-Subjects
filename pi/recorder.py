@@ -12,6 +12,8 @@ Output folder (recordings/<YYYYmmdd_HHMMSS>/):
 
 All Pi-side times are CLOCK_BOOTTIME ns, the clock libcamera uses for SensorTimestamp.
 
+Before recording it checks 1 s of IMU data and refuses to start if there is none or it is all zeros.
+
 Usage:
   python3 recorder.py                      # 640x360 @ 30 fps, Ctrl+C to stop
   python3 recorder.py --duration 120 --exposure-us 2000 --gain 6
@@ -109,7 +111,20 @@ def main():
     ap.add_argument("--port", default="/dev/serial0")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--duration", type=float, default=0, help="seconds, 0 = until Ctrl+C")
+    ap.add_argument("--skip-imu-check", action="store_true",
+                    help="record even if the 1 s IMU check fails (camera-only recordings)")
     args = ap.parse_args()
+
+    # --- refuse to record without real IMU data (see imu_check.py) ------------
+    if not args.skip_imu_check:
+        import imu_check
+        with serial.Serial(args.port, args.baud, timeout=0.01) as ser:
+            v, pkts, bad = imu_check.check(ser, 1.0)
+        print(f"IMU check: {v} ({len(pkts)} packets/s, {bad} CRC errors)")
+        if v != "OK":
+            hint = {"ALL ZEROS": "Crazyflie sensors not calibrated: put it flat and still, or power-cycle it lying flat.",
+                    "NO DATA": "nothing on the UART: check the TX2 wire, GND and the firmware app."}[v]
+            raise SystemExit(f"Not recording: {hint}  Live view: python3 imu_check.py  (override: --skip-imu-check)")
 
     out_dir = os.path.join(args.out, time.strftime("%Y%m%d_%H%M%S"))
     os.makedirs(out_dir)
