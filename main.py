@@ -4,6 +4,7 @@
     python main.py run                     live radar + plots
     python main.py run --headless          live radar, status lines only
     python main.py run --sim               simulated scene (no hardware)
+    python main.py run --osd               camera view with the radar graphs overlaid
     python main.py calibrate               empty-room calibration -> calib.json
     python main.py record out.npz -s 120   save slow-time IQ for offline tuning
     python main.py replay out.npz          replay a recording through the detector
@@ -68,6 +69,31 @@ class Recorder:
             print(f"saved {len(iq) / cfg.slow_fs:.1f} s to {self.path}")
 
 
+def _recording_reader(src, rec: Recorder):
+    """Wrap src.read so every chunk the GUI pulls is also recorded."""
+    orig_read = src.read
+
+    def read_and_record(timeout=0.5):
+        x = orig_read(timeout)
+        rec.add(x)
+        return x
+    return read_and_record
+
+
+def _add_osd_args(p):
+    p.add_argument("--osd", action="store_true",
+                   help="show the camera with the radar graphs overlaid (OpenCV window) instead of matplotlib")
+    p.add_argument("--camera", default="auto",
+                   help="osd: auto | picam | none | V4L2 index | device path / video file (default auto)")
+    p.add_argument("--cam-size", default="1280x720", help="osd: camera / window size WxH")
+    p.add_argument("--fullscreen", action="store_true", help="osd: start fullscreen (toggle with f)")
+    p.add_argument("--rtsp", action="store_true", help="osd: also stream the view over RTSP (rtsp://<pi>:PORT/osd)")
+    p.add_argument("--rtsp-port", type=int, default=8080, help="osd: RTSP port (default 8080)")
+    p.add_argument("--rtsp-fps", type=float, default=15.0, help="osd: stream frame rate (default 15)")
+    p.add_argument("--rtsp-kbps", type=int, default=2500, help="osd: stream bitrate (default 2500)")
+    p.add_argument("--no-window", action="store_true", help="osd: no local window (stream only, e.g. over SSH)")
+
+
 def cmd_run(a):
     cfg = build_config(a)
     th = Thresholds.load(a.calib)
@@ -100,6 +126,28 @@ def cmd_run(a):
                 rec.add(x)
                 for s in pipe.feed(x):
                     on_status(s)
+        elif a.osd or a.rtsp:
+            import signal
+
+            from presence import osd
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(sig, lambda *_: osd.STOP.set())
+            size = tuple(int(v) for v in a.cam_size.lower().split("x"))
+            cam = osd.Camera(a.camera, size)
+            stream = None
+            if a.rtsp:
+                from presence.rtsp import RtspServer
+                stream = RtspServer(size, fps=a.rtsp_fps, port=a.rtsp_port, bitrate_kbps=a.rtsp_kbps)
+                print(f"[rtsp] streaming at {stream.url}  (H.264 {size[0]}x{size[1]} @ {a.rtsp_fps:g} fps)")
+            src.read = _recording_reader(src, rec)
+            try:
+                osd.OsdView(src, pipe, cam, on_status=on_status, heart=cfg.heart, ref_bpm=a.ref_bpm,
+                            size=size, fullscreen=a.fullscreen,
+                            save_thresholds=lambda t: (t.save(a.calib), a.calib)[1],
+                            stream=stream, window=not a.no_window).show()
+            finally:
+                if stream is not None:
+                    stream.stop()
         else:
             import matplotlib
             if a.backend:
@@ -112,13 +160,7 @@ def cmd_run(a):
             # so the window closes and the recording is saved.
             for sig in (signal.SIGINT, signal.SIGTERM):
                 signal.signal(sig, lambda *_: viz.STOP.set())
-            orig_read = src.read
-
-            def read_and_record(timeout=0.5):
-                x = orig_read(timeout)
-                rec.add(x)
-                return x
-            src.read = read_and_record
+            src.read = _recording_reader(src, rec)
             view = (HeartView(src, pipe, on_status=on_status, ref_bpm=a.ref_bpm) if cfg.heart
                     else LiveView(src, pipe, on_status=on_status))
             view.show()
@@ -351,6 +393,7 @@ def main(argv=None):
     r.add_argument("--heart", action="store_true", help="heart-rate mode (subject still, <=0.5 m)")
     r.add_argument("--ref-bpm", type=float, help="heart mode: reference pulse (watch / oximeter) to compare")
     r.add_argument("--backend", help="matplotlib backend override")
+    _add_osd_args(r)
     r.set_defaults(func=cmd_run, file=None)
 
     rp = sub.add_parser("replay", parents=[common], help="replay a recording")
@@ -360,6 +403,7 @@ def main(argv=None):
     rp.add_argument("--heart", action="store_true", help="heart-rate mode (subject still, <=0.5 m)")
     rp.add_argument("--ref-bpm", type=float, help="heart mode: reference pulse (watch / oximeter) to compare")
     rp.add_argument("--backend")
+    _add_osd_args(rp)
     rp.set_defaults(func=cmd_run, record=None)
 
     c = sub.add_parser("calibrate", parents=[common], help="empty-room threshold calibration")

@@ -8,12 +8,11 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import FancyBboxPatch
 
-from .detector import EMPTY, MOVING, STILL, Pipeline, Status, format_status
+from .detector import EMPTY, Pipeline, Status
 from .dsp import doppler_spectrogram
+from .labels import GREEN, GREY, RED, banner, heart_cards, live_spectrogram
 from .radio import Source
 
-STATE_COLORS = {EMPTY: "#6b7280", MOVING: "#dc2626", STILL: "#16a34a", "STILL?": "#ca8a04",
-                "PRESENT": "#15803d"}
 SPEC_SECONDS = 20.0
 STOP = threading.Event()   # set from a signal handler; checked by the animation timer (main thread)
 
@@ -98,30 +97,14 @@ class LiveView:
             return
 
         # state banner
-        label = s.state if s.state != STILL or s.confirmed else ("PRESENT" if s.proximity else "STILL?")
-        far = "   (far motion ignored)" if s.far_motion else ""
-        text = {EMPTY: "NO ONE DETECTED", MOVING: "PERSON MOVING",
-                STILL: "PERSON STILL (breathing)", "STILL?": "PERSON STILL? (acquiring breathing)",
-                "PRESENT": "PERSON PRESENT (still)"}[label]
-        if label == STILL and s.breath is not None:
-            text += f"  {s.breath.bpm:.0f} bpm"
-        text += far
+        text, color = banner(s)
         self.state_txt.set_text(text)
-        self.state_txt.get_bbox_patch().set_facecolor(STATE_COLORS[label])
+        self.state_txt.get_bbox_patch().set_facecolor(color)
 
         # spectrogram
-        n_spec = int(SPEC_SECONDS * self.pipe.fs)
-        xc = self.pipe.hp.last(n_spec)
-        filled = len(xc) / n_spec
-        if len(xc) < n_spec:
-            xc = np.concatenate([np.zeros(n_spec - len(xc), complex), xc])
-        _, _, P = doppler_spectrogram(xc, self.pipe.fs)
-        # colour scale from the columns that hold data (ignore the zero padding at start-up)
-        valid = P[:, int(P.shape[1] * (1 - filled)):] if filled < 1 else P
-        P = np.maximum(P, valid.min()) if valid.size else P
-        lo = np.percentile(valid if valid.size else P, 30)
+        _, P, lo, hi = live_spectrogram(self.pipe, SPEC_SECONDS)
         self.im.set_data(P)
-        self.im.set_clim(lo, max(lo + 25, P.max()))
+        self.im.set_clim(lo, hi)
 
         # motion history
         h = np.array(self.pipe.history)
@@ -161,15 +144,6 @@ class LiveView:
 
     def show(self):
         plt.show()
-
-
-def _ago(sec: float) -> str:
-    sec = int(sec)
-    return f"{sec} s ago" if sec < 60 else f"{sec // 60} min {sec % 60:02d} s ago"
-
-
-GREY, ORANGE, YELLOW, GREEN, DKGREEN, RED, DKRED = ("#6b7280", "#ea580c", "#ca8a04", "#16a34a",
-                                                     "#166534", "#dc2626", "#991b1b")
 
 
 def _style(ax, title):
@@ -290,63 +264,17 @@ class HeartView:
             return
         self.trend = [r for r in self.trend if s.t - r[0] <= 120]
         cfg = self.pipe.cfg
-        bnd = self.pipe.th.boundary_m
 
         # --- cards ---
-        rng = f"within ~{bnd:g} m" if bnd else "in range"
-        far = f"motion beyond ~{bnd:g} m ignored" if (s.far_motion and bnd) else ""
-        if s.state == MOVING:
-            self.c_status.set("MOVING", far or f"person moving {rng}", ORANGE)
-        elif s.heart_bpm is not None:
-            self.c_status.set("STILL", "breathing + heart rate locked", RED)
-        elif s.breath_bpm is not None:
-            self.c_status.set("STILL", "breathing locked, heart measuring", GREEN)
-        elif s.state == STILL:
-            self.c_status.set("STILL", "acquiring - sit still 0.3-0.5 m away", YELLOW)
-        else:
-            self.c_status.set("NO PERSON", far or f"nobody {rng}", GREY)
-
-        b = s.breath
-        if s.breath_bpm is not None:
-            avg = s.breath_last_bpm if s.breath_last_bpm is not None else s.breath_bpm
-            self.c_breath.set(f"{avg:.0f} /min", f"live  -  SNR {b.snr_db:.0f} dB" if b else "live", GREEN)
-        elif s.breath_last_bpm is not None:
-            self.c_breath.set(f"{s.breath_last_bpm:.0f} /min", f"last reading, {_ago(s.breath_last_age_s)}",
-                              DKGREEN)
-        elif s.breath_wait:
-            self.c_breath.set("--", s.breath_wait, GREY)
-        elif s.state != EMPTY:
-            self.c_breath.set("...", "measuring", YELLOW)
-        else:
-            self.c_breath.set("--", "", GREY)
-
-        h = s.heart
-        if s.heart_bpm is not None:
-            avg = s.heart_last_bpm if s.heart_last_bpm is not None else s.heart_bpm
-            self.c_heart.set(f"{avg:.0f} bpm", f"average of {max(s.heart_last_span_s, 1):.0f} s locked", RED)
-        elif s.heart_last_bpm is not None:
-            self.c_heart.set(f"{s.heart_last_bpm:.0f} bpm", f"last reading, {_ago(s.heart_last_age_s)}", DKRED)
-        elif s.heart_wait.startswith("hold still"):
-            self.c_heart.set("--", s.heart_wait.replace(" - nothing may move in range", ""), GREY)
-        elif s.state == EMPTY:
-            self.c_heart.set("--", "", GREY)
-        elif h is not None:
-            self.c_heart.set("...", f"measuring - confidence {h.snr_db:.0f}/{cfg.heart_snr_db:.0f} dB", YELLOW)
-        else:
-            self.c_heart.set("...", "measuring", YELLOW)
+        for card, (_, value, caption, color) in zip((self.c_status, self.c_breath, self.c_heart),
+                                                    heart_cards(s, cfg.heart_snr_db, self.pipe.th.boundary_m)):
+            card.set(value, caption, color)
+        b, h = s.breath, s.heart
 
         # --- spectrogram ---
-        n_spec = int(SPEC_SECONDS * self.pipe.fs)
-        xc = self.pipe.hp.last(n_spec)
-        filled = len(xc) / n_spec
-        if len(xc) < n_spec:
-            xc = np.concatenate([np.zeros(n_spec - len(xc), complex), xc])
-        _, _, P = doppler_spectrogram(xc, self.pipe.fs)
-        valid = P[:, int(P.shape[1] * (1 - filled)):] if filled < 1 else P
-        P = np.maximum(P, valid.min()) if valid.size else P
-        lo = np.percentile(valid if valid.size else P, 30)
+        _, P, lo, hi = live_spectrogram(self.pipe, SPEC_SECONDS)
         self.im.set_data(P)
-        self.im.set_clim(lo, max(lo + 25, P.max()))
+        self.im.set_clim(lo, hi)
 
         # --- waveforms ---
         if b is not None:

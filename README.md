@@ -36,6 +36,22 @@ iio_info -u ip:192.168.2.1 | head                 # check that the Pluto answers
 .venv/bin/python -m pytest -q tests                # synthetic tests
 ```
 
+## Camera overlay (`run --osd`)
+
+```bash
+.venv/bin/python main.py run --osd                       # camera + radar graphs in one OpenCV window
+.venv/bin/python main.py run --osd --heart --fullscreen  # heart cards + waveforms over the camera
+.venv/bin/python main.py run --osd --sim --camera none   # no camera: graphs on a grey background
+```
+
+Shows the live camera frame with the radar drawn on top: the state banner (or the STATUS / BREATHING / HEART RATE cards with `--heart`), the Doppler spectrogram, motion vs auto threshold, and breathing waveform. Heart mode adds the heartbeat waveform and heart-rate history. Keys: `q`/Esc quit, `f` fullscreen, `h` hide/show the graphs.
+
+**Range cutoff, live:** `[` / `]` move the range cutoff 1 dB closer / farther (12 dB halves the distance), and `s` saves it to `calib.json`. The right-hand panel shows your motion level against the cutoff line.
+
+**Network stream:** `--rtsp` also serves the view as H.264 over RTSP on port 8080 (`--rtsp-port`), at `rtsp://<pi-ip>:8080/osd`. Open it with VLC (Media → Open Network Stream) or `ffplay -rtsp_transport tcp rtsp://<pi-ip>:8080/osd`. Add `--no-window` to stream without a local window, e.g. over SSH. It uses ffmpeg/libx264 (the Pi 5 has no hardware H.264 encoder); 720p at 15 fps takes about 10% CPU. `--rtsp-fps` and `--rtsp-kbps` tune the stream.
+
+`--camera auto` (default) uses the Pi camera through picamera2 if one is connected, else `/dev/video0`, else no camera. You can also pass `picam`, a V4L2 index, a device path or a video file. `--cam-size 1280x720` sets the capture and window size. `--osd` also works with `replay`.
+
 ## Heart rate (`run --heart`)
 
 ```bash
@@ -114,5 +130,7 @@ The radar transmits an unmodulated carrier in the 2.4 GHz ISM band. Keep power a
 | `presence/dsp.py` | tone demod, clutter filter, phase-jump fix, motion metric, spectrogram, breathing estimator |
 | `presence/detector.py` | ring buffers, auto floor, processing pipeline, EMPTY/MOVING/STILL state machine, boundary calibration |
 | `presence/viz.py` | live matplotlib view |
+| `presence/osd.py` | OpenCV camera view with the radar graphs overlaid (`--osd`) |
+| `presence/labels.py` | status text / colours and live spectrogram shared by both views |
 | `presence/sim.py` | synthetic scenes (incl. near person + far bystanders) for tests and `--sim` |
 | `main.py` | CLI |

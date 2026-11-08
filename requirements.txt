@@ -3,5 +3,6 @@ scipy>=1.10
 matplotlib>=3.7
 pyadi-iio>=0.0.17
 pylibiio==0.25   # must match the system libiio 0.x (Debian libiio0 0.26); pylibiio 1.0 needs libiio 1.x
+opencv-python>=4.8   # run --osd (camera overlay); Pi camera via system python3-picamera2
 pillow>=10        # venv copy: Debian python3-pil lacks ImageTk needed by the TkAgg plot window
 pytest>=7
