@@ -17,6 +17,7 @@
 | `offline/demo_report.py`, `demo.sh` | Demo outputs: stats, IMU-only vs VIO plot, side-by-side video |
 | `offline/make_synthetic.py` | Fake recording with known answers, to test the converter |
 | `calib/` | Kalibr target/IMU templates, Kalibr → OpenVINS config helper, OpenVINS starter config |
+| `live/` | Live VIO: sensor streamer, ROS bridge + browser viewer, `run.sh` (Pi 5 or replay) |
 | `docker/` | Docker install + Kalibr / OpenVINS images for WSL, `run.sh` wrapper |
 
 ---
@@ -200,6 +201,80 @@ It converts the recording, runs OpenVINS in Docker and writes into `data/<stamp>
 For a loop run (start and end on the same taped X) the start-to-end gap is the drift number for the demo.
 The IMU-only baseline works even on a recording where the drone sits still on the desk.
 `offline/demo_report.py data/<name> --video` reruns only the report.
+
+## 9. Live VIO on a Raspberry Pi 5 (handheld walking demo)
+
+```
+ Pi 5 (handheld rig)                                                        any browser
+ ───────────────────                                                        ───────────
+ Camera Module 3 ─┐                          Docker: cf_vio/openvins
+                  ├─ live/streamer.py ─TCP─► live_node.py ─► OpenVINS        http://<pi>:8080
+ Crazyflie (IMU) ─┘  live clock sync,        (ROS bridge)  ◄─ poses/tracks   tracked features +
+   USB-powered       records the session     + web viewer :8080 ───────────► live top-down path
+```
+
+`live/run.sh` starts everything; the browser page (laptop, phone or projector on the same network) shows
+the feature tracks and the trajectory with distance travelled / from start. Every live session is also
+recorded to `recordings/<stamp>/`, so it can be replayed or reprocessed with `./demo.sh` afterwards.
+
+### Hardware
+
+* Pi 5 (4 or 8 GB) with the active cooler, and a USB-C power bank that can deliver 5 V / 3 A or more.
+* The same Camera Module 3 on the Pi 5's camera connector (same small 22-pin connector as the Zero; check
+  your cable fits). Keep 640×360, the same `--lens-position` and the same mounting orientation.
+* The Crazyflie as the IMU, powered from a Pi USB port (no battery needed), **rigidly fixed to the same
+  plate as the camera**. Wire CF TX2 → Pi 5 GPIO15 / RXD (pin 10) and GND → GND.
+* If the camera–Crazyflie mounting differs from the drone, **re-run the camera–IMU calibration** (step 6,
+  second Kalibr command, recorded on the new rig). The camera intrinsics (`data/calib/calib-camchain.yaml`)
+  carry over.
+
+### Pi 5 software (Raspberry Pi OS Bookworm 64-bit)
+
+```bash
+sudo raspi-config nonint do_serial_cons 1                 # no login console on the UART
+echo "dtparam=uart0=on" | sudo tee -a /boot/firmware/config.txt
+sudo apt install -y git python3-picamera2 python3-serial
+sudo reboot
+```
+
+On the Pi 5 the GPIO14/15 UART is `uart0`. After the reboot check which device it is (usually `/dev/ttyAMA0`;
+`/dev/serial0` may point to the separate debug connector instead), then confirm the IMU:
+
+```bash
+ls -l /dev/serial* /dev/ttyAMA*
+python3 pi/imu_check.py --port /dev/ttyAMA0
+```
+
+Clone this repo on the Pi, install Docker and build the OpenVINS image (arm64, `ros:noetic-perception`
+base, roughly 30–60 min):
+
+```bash
+sudo bash docker/install_docker.sh                         # then log out and back in
+JOBS=3 ./docker/build_images.sh openvins
+```
+
+### Run it
+
+```bash
+live/run.sh --port /dev/ttyAMA0
+```
+
+Open the printed `http://<pi-address>:8080/` in a browser. Wait for `clock sync ready` in the terminal
+(about 3 s), hold the rig still for 3 s, then walk. "Reset path" clears the drawing without restarting.
+Ctrl+C stops everything; the trajectory is in `data/live_<time>/traj_est.txt` and the raw session in
+`recordings/<stamp>/`.
+
+If the page's VIO rate falls well below the camera rate, the Pi is not keeping up: lower `num_pts` (e.g. 100)
+or `track_frequency` (e.g. 15) in `calib/openvins/crazyflie/estimator_config.yaml`. On the laptop OpenVINS
+used about half of one core at 30 fps; the Pi 5 has not been measured yet.
+
+### Test on the laptop without hardware
+
+```bash
+live/run.sh --replay recordings/<stamp>                    # plays a recording through the live path
+```
+
+then open http://localhost:8080/ in a Windows browser.
 
 ### Flight protocol
 
