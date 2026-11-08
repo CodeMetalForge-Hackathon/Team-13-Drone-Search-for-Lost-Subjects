@@ -45,6 +45,11 @@ show_waypoint_map = true;     % also draw a 2-D geoplot of the route
 % The scenario is lengthened to cover the whole flight.
 route_speed_mps = 10;         % m/s along the path
 route_alt_m     = 100;        % m, cruise altitude (takeoff/landing at 0 m)
+% Takeoff time. Set TimeZone to 'America/Los_Angeles' for local time at
+% the route; [] → use the flight file's start time.
+route_start_time = datetime(2026, 11, 8, 4, 47, 0, 'TimeZone', 'America/Los_Angeles');
+                              % 04:47 PST: most usable Iridium sats on 8 Nov
+                              % (sweep with the 13 May 2026 TLEs)
 
 % ── Satellite selection when show_flight_trajectory = false ─────────────
 % Satellites are chosen as visible from the drone-1 route (route centre),
@@ -52,6 +57,9 @@ route_alt_m     = 100;        % m, cruise altitude (takeoff/landing at 0 m)
 % selection_mask_deg for at least min_visibility_sec of the scenario window.
 % The same mask gates the yellow visibility lines to the drone.
 show_constellations = {'Iridium'};   % any of 'Starlink','Orbcomm','Iridium'
+include_all_sats    = true;   % true → every satellite of show_constellations,
+                              %        visible or not (lines still only
+                              %        appear while above the mask)
 selection_mask_deg  = 10;     % deg (flight generator uses 20)
 min_visibility_sec  = 200;    % generate_synthetic_data.m default
 
@@ -165,6 +173,14 @@ else
     route_lon = interp1(r_toa, r_lon, route_t, 'linear', r_lon(end));
     route_alt = interp1(r_toa, r_alt, route_t, 'linear', r_alt(end));
 
+    if ~isempty(route_start_time)
+        % satelliteScenario works in UTC with time-zone-free datetimes
+        t0 = route_start_time;
+        if isempty(t0.TimeZone), t0.TimeZone = 'UTC'; end
+        t0.TimeZone = 'UTC';
+        t0.TimeZone = '';
+        scenario_start_time = t0;
+    end
     scenario_stop_time  = scenario_start_time + seconds(route_duration_sec);
     scenario_time_array = scenario_start_time + seconds(0:route_duration_sec);
 
@@ -208,6 +224,7 @@ if show_flight_trajectory
                         'UniformOutput', false);
 else
     % Satellites visible from the drone-1 route over the flight window
+    % (always computed, so the console reports which ones are usable)
     centre_lat = mean(wp_lat);
     centre_lon = mean(wp_lon);
     fprintf('Selecting satellites visible from the drone-1 route (%.4f, %.4f)...\n', ...
@@ -216,8 +233,17 @@ else
     [sat_names, vis_sec] = select_visible_sats(shown_files, scenario_time_array, ...
         centre_lat, centre_lon, route_alt_m, selection_mask_deg, min_visibility_sec);
     num_selected_sats = numel(sat_names);
-    fprintf('  %d %s satellites above %g° for ≥ %d s\n', num_selected_sats, ...
-        strjoin(show_constellations, '/'), selection_mask_deg, min_visibility_sec);
+    fprintf('  %d %s satellites above %g° for ≥ %d s: %s\n', num_selected_sats, ...
+        strjoin(show_constellations, '/'), selection_mask_deg, min_visibility_sec, ...
+        strjoin(sat_names, ', '));
+
+    if include_all_sats
+        shown = ismember({tle_catalog.constellation}, show_constellations);
+        sat_names = catalog_names(shown);
+        num_selected_sats = numel(sat_names);
+        fprintf('  Adding all %d %s satellites (include_all_sats = true)\n', ...
+            num_selected_sats, strjoin(show_constellations, '/'));
+    end
 end
 
 % Match each selected satellite name to its TLE entry.
