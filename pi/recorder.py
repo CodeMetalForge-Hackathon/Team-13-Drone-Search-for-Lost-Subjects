@@ -119,7 +119,6 @@ def main():
 
     # --- refuse to record without real IMU data (see imu_check.py) ------------
     if not args.skip_imu_check:
-        import imu_check
         with serial.Serial(args.port, args.baud, timeout=0.01) as ser:
             v, pkts, bad = imu_check.check(ser, 1.0)
         print(f"IMU check: {v} ({len(pkts)} packets/s, {bad} CRC errors)")
