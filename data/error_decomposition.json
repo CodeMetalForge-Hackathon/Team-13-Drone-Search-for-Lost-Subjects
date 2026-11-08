@@ -1,0 +1,272 @@
+[
+  {
+    "run": "validate_20261108_061442_crazyflie",
+    "imu": {
+      "g_norm_rest": 9.819862551152061,
+      "accel_scale": 1.0013473052624557,
+      "accel_std_rest": 0.032132135447822854,
+      "gyro_bias_dps": [
+        -0.175,
+        0.115,
+        -0.07
+      ],
+      "gyro_yaw_scale_vs_lio": 1.0058202720819696,
+      "vio_yaw_scale_vs_lio": 1.0059358698342313,
+      "turn_windows": 39,
+      "total_yaw_lio_deg": 186.70314553602543,
+      "total_yaw_gyro_deg": 186.86901435119879,
+      "total_yaw_vio_deg": 182.8203655512076
+    },
+    "ladder": {
+      "rigid": {
+        "params": {
+          "scale": 1.0,
+          "yaw_drift_deg_per_min": 0.0,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 5.464552253964826,
+        "ate_max": 8.81199920496615,
+        "final": 8.780965863247886
+      },
+      "+scale": {
+        "params": {
+          "scale": 1.733,
+          "yaw_drift_deg_per_min": 0.0,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 1.4129425362875678,
+        "ate_max": 6.545425543393058,
+        "final": 1.4455190358416363
+      },
+      "+scale+yawdrift": {
+        "params": {
+          "scale": 1.757,
+          "yaw_drift_deg_per_min": -4.19,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 1.3816909014733847,
+        "ate_max": 6.45188326784194,
+        "final": 1.0305870332647684
+      },
+      "+drifts": {
+        "params": {
+          "scale": 1.382,
+          "yaw_drift_deg_per_min": -4.81,
+          "scale_drift_pct_per_min": 20.6
+        },
+        "ate_rmse": 1.1231728514494235,
+        "ate_max": 4.341971177590987,
+        "final": 0.6643176083080959
+      }
+    },
+    "reconstructions": {
+      "perfect scale (VIO rotation only)": {
+        "ate_rmse": 0.3013773454996481,
+        "ate_max": 0.5798585844288655,
+        "final": 0.29196982611439465
+      },
+      "perfect rotation (VIO lengths)": {
+        "ate_rmse": 5.419086649161245,
+        "ate_max": 8.349557567418158,
+        "final": 8.349557567418158
+      },
+      "perfect rotation + const scale": {
+        "ate_rmse": 1.535058923815825,
+        "ate_max": 6.7693437905193194,
+        "final": 0.8068578786224473
+      }
+    },
+    "steps": {
+      "step_s": 1.0,
+      "n_moving": 72,
+      "length_ratio_vio_over_lio_median": 0.5845110001470324,
+      "length_ratio_p10_p90": [
+        0.4954640934958075,
+        1.4621988308933687
+      ],
+      "direction_error_deg_rms": 11.937197266539526,
+      "direction_error_deg_p90_abs": 17.35995909855188
+    },
+    "len_lio": 46.199378598093084
+  },
+  {
+    "run": "validate_20261108_061640_crazyflie",
+    "imu": {
+      "g_norm_rest": 9.818828699813288,
+      "accel_scale": 1.0012418817652602,
+      "accel_std_rest": 0.0200768778163404,
+      "gyro_bias_dps": [
+        -0.179,
+        0.12,
+        -0.063
+      ],
+      "gyro_yaw_scale_vs_lio": 1.0032597758458324,
+      "vio_yaw_scale_vs_lio": 1.0012255076869003,
+      "turn_windows": 28,
+      "total_yaw_lio_deg": 177.78138991036798,
+      "total_yaw_gyro_deg": 178.7445524383257,
+      "total_yaw_vio_deg": 185.08735347841727
+    },
+    "ladder": {
+      "rigid": {
+        "params": {
+          "scale": 1.0,
+          "yaw_drift_deg_per_min": 0.0,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 3.7140478497441003,
+        "ate_max": 5.067729673915805,
+        "final": 3.042812909772935
+      },
+      "+scale": {
+        "params": {
+          "scale": 1.409,
+          "yaw_drift_deg_per_min": 0.0,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 2.1117725625508403,
+        "ate_max": 4.404499299288311,
+        "final": 4.404499299288311
+      },
+      "+scale+yawdrift": {
+        "params": {
+          "scale": 1.41,
+          "yaw_drift_deg_per_min": -0.28,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 2.1117439191069605,
+        "ate_max": 4.403055274872228,
+        "final": 4.403055274872228
+      },
+      "+drifts": {
+        "params": {
+          "scale": 3.513,
+          "yaw_drift_deg_per_min": -0.96,
+          "scale_drift_pct_per_min": -57.8
+        },
+        "ate_rmse": 0.6104517374697103,
+        "ate_max": 1.4517810656179586,
+        "final": 0.4159210843333808
+      }
+    },
+    "reconstructions": {
+      "perfect scale (VIO rotation only)": {
+        "ate_rmse": 0.270281020715915,
+        "ate_max": 0.5025611768537162,
+        "final": 0.4340402886989383
+      },
+      "perfect rotation (VIO lengths)": {
+        "ate_rmse": 3.648425813160431,
+        "ate_max": 4.93441205833639,
+        "final": 2.7821929641780145
+      },
+      "perfect rotation + const scale": {
+        "ate_rmse": 2.095633307641723,
+        "ate_max": 4.599569608022405,
+        "final": 4.599569608022405
+      }
+    },
+    "steps": {
+      "step_s": 1.0,
+      "n_moving": 73,
+      "length_ratio_vio_over_lio_median": 0.515486270731863,
+      "length_ratio_p10_p90": [
+        0.32118718981584904,
+        1.1082413051809652
+      ],
+      "direction_error_deg_rms": 9.819905642414362,
+      "direction_error_deg_p90_abs": 10.698925977305668
+    },
+    "len_lio": 46.77022085758773
+  },
+  {
+    "run": "validate_20261108_061640_pi5",
+    "imu": {
+      "g_norm_rest": 9.818828699813288,
+      "accel_scale": 1.0012418817652602,
+      "accel_std_rest": 0.0200768778163404,
+      "gyro_bias_dps": [
+        -0.179,
+        0.12,
+        -0.063
+      ],
+      "gyro_yaw_scale_vs_lio": 1.0030406238084622,
+      "vio_yaw_scale_vs_lio": 1.0587490743292893,
+      "turn_windows": 28,
+      "total_yaw_lio_deg": 177.15718651565672,
+      "total_yaw_gyro_deg": 178.74299903185832,
+      "total_yaw_vio_deg": 162.07989539836638
+    },
+    "ladder": {
+      "rigid": {
+        "params": {
+          "scale": 1.0,
+          "yaw_drift_deg_per_min": 0.0,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 7.580173882031651,
+        "ate_max": 12.415159784017717,
+        "final": 12.415159784017717
+      },
+      "+scale": {
+        "params": {
+          "scale": 3.088,
+          "yaw_drift_deg_per_min": 0.0,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 2.844416597607676,
+        "ate_max": 5.7450264480261986,
+        "final": 5.568864384310962
+      },
+      "+scale+yawdrift": {
+        "params": {
+          "scale": 2.934,
+          "yaw_drift_deg_per_min": 30.84,
+          "scale_drift_pct_per_min": 0.0
+        },
+        "ate_rmse": 2.537209184663399,
+        "ate_max": 5.901880973311114,
+        "final": 5.714898277246302
+      },
+      "+drifts": {
+        "params": {
+          "scale": 8.086,
+          "yaw_drift_deg_per_min": 30.17,
+          "scale_drift_pct_per_min": -60.8
+        },
+        "ate_rmse": 1.069064683570605,
+        "ate_max": 2.439208018332298,
+        "final": 1.4297396585634625
+      }
+    },
+    "reconstructions": {
+      "perfect scale (VIO rotation only)": {
+        "ate_rmse": 0.9257744889639624,
+        "ate_max": 1.7153921826856475,
+        "final": 1.4651103502423275
+      },
+      "perfect rotation (VIO lengths)": {
+        "ate_rmse": 7.5671478762710445,
+        "ate_max": 12.156013207567069,
+        "final": 12.156013207567069
+      },
+      "perfect rotation + const scale": {
+        "ate_rmse": 2.6740172931553214,
+        "ate_max": 6.107975907934821,
+        "final": 6.107975907934821
+      }
+    },
+    "steps": {
+      "step_s": 1.0,
+      "n_moving": 73,
+      "length_ratio_vio_over_lio_median": 0.2297033901716827,
+      "length_ratio_p10_p90": [
+        0.13423137085361236,
+        0.6089947436222813
+      ],
+      "direction_error_deg_rms": 19.05141838669169,
+      "direction_error_deg_p90_abs": 27.491032297193108
+    },
+    "len_lio": 46.88917099968141
+  }
+]

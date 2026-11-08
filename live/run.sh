@@ -18,7 +18,7 @@ py=python3
 
 docker rm -f cf_vio_live >/dev/null 2>&1 || true
 docker run -d --rm --name cf_vio_live --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e CONFIG="$config" -e OUT="data/$name" -e HTTP_PORT="${HTTP_PORT:-8080}" -e VERBOSITY="${VERBOSITY:-WARNING}" \
+  -e CONFIG="$config" -e OUT="data/$name" -e TITLE="${TITLE:-live}" -e HTTP_PORT="${HTTP_PORT:-8080}" -e VERBOSITY="${VERBOSITY:-WARNING}" \
   -v "$PWD":/data --entrypoint bash "${IMAGE:-cf_vio/openvins}" /data/live/run_live.sh >/dev/null
 trap 'echo; echo "stopping OpenVINS container"; docker stop -t 3 cf_vio_live >/dev/null 2>&1 || true' EXIT
 echo "OpenVINS starting in Docker (logs: docker logs -f cf_vio_live); trajectory -> data/$name/traj_est.txt"

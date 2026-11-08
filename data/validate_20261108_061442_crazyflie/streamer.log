@@ -1,0 +1,50 @@
+[streamer] serving on 127.0.0.1:5600
+[streamer] waiting for live_node to connect ...
+[streamer] live_node connected from 127.0.0.1
+[streamer] synchronised start: streaming and recording from here
+[streamer] imu 0  frames 0  scans 0  sent 0/0/0  dropped frames 0  drift +0 ppm over 1 s
+[streamer] clock sync ready (drift -757 ppm over 3 s). Hold the rig still for 3 s, then start moving.
+[streamer] imu 387  frames 24  scans 6  sent 387/24/6  dropped frames 0  drift -757 ppm over 3 s  lidar drift -17 ppm over 3 s
+[streamer] imu 1388  frames 84  scans 26  sent 1388/84/26  dropped frames 0  drift -756 ppm over 5 s  lidar drift -15 ppm over 5 s
+[streamer] imu 2389  frames 144  scans 46  sent 2389/144/46  dropped frames 0  drift -756 ppm over 7 s  lidar drift -14 ppm over 7 s
+[streamer] imu 3390  frames 204  scans 66  sent 3390/204/66  dropped frames 0  drift -755 ppm over 9 s  lidar drift -14 ppm over 9 s
+[streamer] imu 4391  frames 264  scans 86  sent 4391/264/86  dropped frames 0  drift -755 ppm over 11 s  lidar drift -13 ppm over 11 s
+[streamer] imu 5392  frames 324  scans 106  sent 5392/324/106  dropped frames 0  drift -755 ppm over 13 s  lidar drift -13 ppm over 13 s
+[streamer] imu 6393  frames 384  scans 126  sent 6393/384/126  dropped frames 0  drift -755 ppm over 15 s  lidar drift -13 ppm over 15 s
+[streamer] imu 7394  frames 444  scans 146  sent 7394/444/146  dropped frames 0  drift -755 ppm over 17 s  lidar drift -13 ppm over 17 s
+[streamer] imu 8395  frames 504  scans 166  sent 8395/504/166  dropped frames 0  drift -755 ppm over 19 s  lidar drift -13 ppm over 19 s
+[streamer] imu 9396  frames 564  scans 186  sent 9396/564/186  dropped frames 0  drift -755 ppm over 21 s  lidar drift -13 ppm over 21 s
+[streamer] imu 10396  frames 624  scans 207  sent 10396/624/207  dropped frames 0  drift -755 ppm over 23 s  lidar drift -13 ppm over 23 s
+[streamer] imu 11397  frames 684  scans 227  sent 11397/684/227  dropped frames 0  drift -754 ppm over 25 s  lidar drift -13 ppm over 25 s
+[streamer] imu 12398  frames 744  scans 246  sent 12398/744/246  dropped frames 0  drift -754 ppm over 27 s  lidar drift -13 ppm over 27 s
+[streamer] imu 13399  frames 804  scans 267  sent 13399/804/267  dropped frames 0  drift -754 ppm over 29 s  lidar drift -13 ppm over 29 s
+[streamer] imu 14400  frames 864  scans 287  sent 14400/864/287  dropped frames 0  drift -754 ppm over 31 s  lidar drift -13 ppm over 31 s
+[streamer] imu 15401  frames 924  scans 307  sent 15401/924/307  dropped frames 0  drift -754 ppm over 33 s  lidar drift -13 ppm over 33 s
+[streamer] imu 16402  frames 984  scans 327  sent 16402/984/327  dropped frames 0  drift -754 ppm over 35 s  lidar drift -13 ppm over 35 s
+[streamer] imu 17403  frames 1044  scans 347  sent 17403/1044/347  dropped frames 0  drift -754 ppm over 37 s  lidar drift -13 ppm over 37 s
+[streamer] imu 18404  frames 1104  scans 367  sent 18404/1104/367  dropped frames 0  drift -753 ppm over 39 s  lidar drift -13 ppm over 39 s
+[streamer] imu 19405  frames 1164  scans 387  sent 19405/1164/387  dropped frames 0  drift -753 ppm over 41 s  lidar drift -13 ppm over 41 s
+[streamer] imu 20406  frames 1224  scans 407  sent 20406/1224/407  dropped frames 0  drift -753 ppm over 43 s  lidar drift -13 ppm over 43 s
+[streamer] imu 21407  frames 1284  scans 427  sent 21407/1284/427  dropped frames 0  drift -753 ppm over 45 s  lidar drift -13 ppm over 45 s
+[streamer] imu 22408  frames 1344  scans 447  sent 22408/1344/447  dropped frames 0  drift -753 ppm over 47 s  lidar drift -13 ppm over 47 s
+[streamer] imu 23409  frames 1404  scans 467  sent 23409/1404/467  dropped frames 0  drift -753 ppm over 49 s  lidar drift -13 ppm over 49 s
+[streamer] imu 24410  frames 1464  scans 487  sent 24410/1464/487  dropped frames 0  drift -753 ppm over 51 s  lidar drift -13 ppm over 51 s
+[streamer] imu 25411  frames 1524  scans 507  sent 25411/1524/507  dropped frames 0  drift -753 ppm over 53 s  lidar drift -13 ppm over 53 s
+[streamer] imu 26412  frames 1584  scans 527  sent 26412/1584/527  dropped frames 0  drift -752 ppm over 55 s  lidar drift -13 ppm over 55 s
+[streamer] imu 27413  frames 1645  scans 547  sent 27413/1645/547  dropped frames 0  drift -752 ppm over 57 s  lidar drift -13 ppm over 57 s
+[streamer] imu 28414  frames 1705  scans 567  sent 28414/1705/567  dropped frames 0  drift -752 ppm over 59 s  lidar drift -13 ppm over 59 s
+[streamer] imu 29415  frames 1765  scans 587  sent 29415/1765/587  dropped frames 0  drift -752 ppm over 60 s  lidar drift -13 ppm over 60 s
+[streamer] imu 30416  frames 1825  scans 607  sent 30416/1825/607  dropped frames 0  drift -752 ppm over 60 s  lidar drift -13 ppm over 60 s
+[streamer] imu 31417  frames 1885  scans 627  sent 31417/1885/627  dropped frames 0  drift -752 ppm over 60 s  lidar drift -13 ppm over 60 s
+[streamer] imu 32418  frames 1945  scans 647  sent 32418/1945/647  dropped frames 0  drift -751 ppm over 60 s  lidar drift -13 ppm over 60 s
+[streamer] imu 33419  frames 2005  scans 667  sent 33419/2005/667  dropped frames 0  drift -751 ppm over 60 s  lidar drift -13 ppm over 60 s
+[streamer] imu 34420  frames 2065  scans 687  sent 34420/2065/687  dropped frames 0  drift -751 ppm over 60 s  lidar drift -13 ppm over 60 s
+[streamer] imu 35421  frames 2125  scans 707  sent 35421/2125/707  dropped frames 0  drift -751 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 36422  frames 2185  scans 727  sent 36422/2185/727  dropped frames 0  drift -751 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 37423  frames 2245  scans 747  sent 37423/2245/747  dropped frames 0  drift -751 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 38424  frames 2305  scans 767  sent 38424/2305/767  dropped frames 0  drift -750 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 39425  frames 2365  scans 787  sent 39425/2365/787  dropped frames 0  drift -750 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 40426  frames 2425  scans 807  sent 40426/2425/807  dropped frames 0  drift -750 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 41427  frames 2485  scans 827  sent 41427/2485/827  dropped frames 0  drift -750 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 42428  frames 2545  scans 847  sent 42428/2545/847  dropped frames 0  drift -750 ppm over 60 s  lidar drift -12 ppm over 60 s
+[streamer] imu 43428  frames 2605  scans 867  sent 43428/2605/867  dropped frames 0  drift -750 ppm over 60 s  lidar drift -11 ppm over 60 s
