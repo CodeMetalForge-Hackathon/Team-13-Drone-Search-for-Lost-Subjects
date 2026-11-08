@@ -1,7 +1,7 @@
 # Kalibr AprilGrid target. Print the grid at 100% and MEASURE tagSize with calipers.
-# Generate a PDF: kalibr_create_target_pdf --type apriltag --nx 6 --ny 6 --tsize 0.04 --tspace 0.3
+# Generate a PDF: kalibr_create_target_pdf --type apriltag --nx 6 --ny 6 --tsize 0.025 --tspace 0.3
 target_type: 'aprilgrid'
 tagCols: 6
 tagRows: 6
-tagSize: 0.04      # [m] edge length of one tag
+tagSize: 0.025     # [m] edge length of one tag (6x6 grid ~19 cm wide, fits Letter/A4)
 tagSpacing: 0.3    # [-] gap between tags / tagSize
