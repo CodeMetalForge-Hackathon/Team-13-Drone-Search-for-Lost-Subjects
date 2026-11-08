@@ -286,6 +286,16 @@ def main():
         "lost_packets": int(np.sum(seq_gaps[seq_gaps > 1] - 1)),
         "rate_hz": float(1e6 / np.median(np.diff(imu["t_cf_us"]))),
     }
+    # The Crazyflie only fills the gyro/acc log variables once its sensors are calibrated, which needs
+    # it to sit still after power-on. If it never was, every packet is valid but contains zeros.
+    zero = np.all(imu["gyro"] == 0, axis=1) & np.all(imu["acc"] == 0, axis=1)
+    report["imu"]["zero_samples"] = int(zero.sum())
+    if zero.mean() > 0.5:
+        sys.exit(f"error: {zero.sum()} of {len(zero)} IMU samples are all zeros. The Crazyflie's sensors were "
+                 "not calibrated: power it on lying flat and still for ~3 s before picking it up, then record again.")
+    if zero.any():
+        print(f"warning: {zero.sum()} IMU samples are all zeros (sensors not yet calibrated at the start?)",
+              file=sys.stderr)
     cf_to_pi, clock, clock_dbg = fit_clock(imu["t_cf_us"], imu["arr_ns"])
     report["clock_fit"] = clock
     t_imu = cf_to_pi(imu["t_cf_us"])
