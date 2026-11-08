@@ -348,3 +348,25 @@ def test_no_heart_lock_while_nobody_is_present():
     assert len(empty) > 100
     assert all(s.heart_bpm is None for s in empty)
     assert all(s.breath_bpm is None for s in empty)
+
+
+def test_still_presence_hysteresis(prox_th):
+    # once present, near energy slightly below the threshold keeps presence (leaning on a wall);
+    # from EMPTY the full threshold is still needed
+    from presence.detector import Detector
+    cfg = Config()
+    d = Detector(cfg, prox_th)
+    thr = prox_th.still_abs_db
+    t = 0.0
+    for _ in range(15):                                 # clearly present for 3 s
+        t += 0.2
+        d.step(t, 0.0, None, -150.0, 6.0, thr + 3)
+    assert d.state == "STILL"
+    for _ in range(50):                                 # 10 s just below the threshold
+        t += 0.2
+        d.step(t, 0.0, None, -150.0, 6.0, thr - cfg.still_hyst_db / 2)
+    assert d.state == "STILL"
+    d2 = Detector(cfg, prox_th)                          # same level from EMPTY: not enough
+    for k in range(50):
+        d2.step(0.2 * (k + 1), 0.0, None, -150.0, 6.0, thr - cfg.still_hyst_db / 2)
+    assert d2.state == "EMPTY"

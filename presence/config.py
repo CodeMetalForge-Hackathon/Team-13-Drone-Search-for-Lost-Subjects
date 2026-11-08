@@ -53,11 +53,14 @@ class Config:
     still_win_s: float = 8.0
     still_band: tuple = (0.15, 2.0)
     near_confirm_s: float = 1.5          # near still-energy this long -> present
+    still_hyst_db: float = 2.0           # hysteresis: once present, stay present down to this many dB
+                                         # below the still threshold (e.g. leaning still against a wall)
     proximity_absent_s: float = 3.0      # no near energy / motion this long -> EMPTY
 
     # --- heart rate (run --heart) ------------------------------------------
     heart: bool = False
-    heart_win_s: float = 16.0
+    heart_win_s: float = 16.0            # heart window grows from heart_min_win_s up to this
+    heart_min_win_s: float = 8.0         # hold still this long before the first heart estimate
     heart_every_s: float = 1.0
     heart_avg_alpha: float = 0.2         # spectral averaging across successive estimates
     heart_snr_db: float = 9.0            # per-estimate confidence for the lock tracker

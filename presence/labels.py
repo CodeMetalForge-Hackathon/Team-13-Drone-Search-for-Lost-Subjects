@@ -67,7 +67,7 @@ def heart_cards(s: Status, heart_snr_db: float, boundary_m: float | None):
     else:
         br = ("--", "", GREY)
 
-    # same rules as breathing: live estimate (locked / unconfirmed), else held reading, else wait
+    # like breathing: live estimate (locked / unconfirmed), else the hold-still countdown
     h = s.heart if s.state != EMPTY else None
     hwait = _short_wait(s.heart_wait) if s.heart_wait.startswith("hold still") else ""
     if h is not None:
@@ -75,10 +75,7 @@ def heart_cards(s: Status, heart_snr_db: float, boundary_m: float | None):
             hr = (f"{h.bpm:.0f} bpm", f"live  -  confidence {h.snr_db:.0f} dB", RED)
         else:
             hr = (f"{h.bpm:.0f} bpm", f"unconfirmed  -  confidence {h.snr_db:.0f} dB", YELLOW)
-    elif s.heart_last_bpm is not None:
-        cap = f"last reading, {ago(s.heart_last_age_s)}"
-        hr = (f"{s.heart_last_bpm:.0f} bpm", f"{cap}  -  {hwait}" if hwait else cap, DKRED)
-    elif hwait:
+    elif hwait:                                  # (no held "last reading" for heart rate)
         hr = ("--", hwait, GREY)
     elif s.state != EMPTY:
         hr = ("...", "measuring", YELLOW)

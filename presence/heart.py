@@ -78,7 +78,7 @@ def estimate_heart(x: np.ndarray, fs: float, wavelength: float, breath_hz: float
     of both" are much worse). methods=("phase",) is available for experiments.
     """
     n = len(x)
-    if n < fs * 8:
+    if n < fs * 7.9:                           # needs ~8 s (heart_min_win_s)
         return None
     best = None
     for m in methods:

@@ -180,7 +180,9 @@ class Detector:
         if self.proximity:
             # presence = near micro-motion energy (breathing / sway) or near motion; breathing lock
             # only adds the rate ("confirmed"). Leaving is detected within proximity_absent_s.
-            near = still_abs is not None and still_abs >= self.th.still_abs_db
+            # hysteresis: entering needs the full still threshold, staying needs still_hyst_db less
+            need = self.th.still_abs_db - (c.still_hyst_db if self.state != EMPTY else 0.0)
+            near = still_abs is not None and still_abs >= need
             self.near_run = self.near_run + dt if near else 0.0
             if moving:
                 self.state, self.confirmed = MOVING, True
@@ -335,15 +337,16 @@ class Pipeline:
             return
         self._heart_next_t = t + c.heart_every_s
         quiet = t - last_reset - c.motion_win_s
-        if quiet < c.heart_win_s:
+        if quiet < c.heart_min_win_s:
             self._heart = None
             self._heart_wait = (f"hold still - nothing may move in range ({max(0.0, quiet):.0f}/"
-                                f"{c.heart_win_s:.0f} s)")
+                                f"{c.heart_min_win_s:.0f} s)")
             self._heart_bpm = self.heart_tracker.update(t, None)
             self.heart_avg.reset()
             self._expire_last_heart(t)
             return
-        x20 = block_decimate(self.raw.last(int(c.heart_win_s * self.fs)), self.fs // c.breath_fs)
+        win = min(c.heart_win_s, quiet)           # grows to the full window while it stays quiet
+        x20 = block_decimate(self.raw.last(int(win * self.fs)), self.fs // c.breath_fs)
         bh = br.bpm / 60 if br is not None and self.detector.breath_ok(br) else None
         self._heart = estimate_heart(x20, c.breath_fs, c.wavelength, bh, avg=self.heart_avg)
         self._heart_bpm = self.heart_tracker.update(t, self._heart if present else None)

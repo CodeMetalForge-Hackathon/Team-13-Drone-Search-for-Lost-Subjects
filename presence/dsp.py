@@ -222,7 +222,7 @@ def estimate_breathing(x: np.ndarray, fs: float, wavelength: float,
                        band=(0.1, 0.6), noise_band=(0.8, 3.0)) -> BreathResult | None:
     """Estimate breathing from raw (clutter-included) slow-time IQ at `fs` (~20 Hz)."""
     n = len(x)
-    if n < fs * 8:
+    if n < fs * 4.9:                           # needs ~5 s (breath_min_win_s in heart mode)
         return None
     # remove slow clutter/LO drift (below ~0.6 x lowest breathing rate), keep the mean so the
     # IQ arc geometry (circle centre) is preserved for the phase demodulation below

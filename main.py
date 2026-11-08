@@ -39,7 +39,7 @@ def build_config(a) -> Config:
     # the OSD shows breathing and heart rate by default (heart mode); --no-heart for presence only
     cfg.heart = bool(getattr(a, "heart", False)) or (osd_view and not getattr(a, "no_heart", False))
     if cfg.heart:
-        cfg.breath_min_win_s = 10.0     # breathing reading appears ~8 s before heart rate
+        cfg.breath_min_win_s = 5.0      # breathing reading appears before heart rate (8 s)
     cfg.validate()
     return cfg
 
